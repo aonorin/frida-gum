@@ -14,7 +14,7 @@
 
 #include <gum/gumexceptor.h>
 
-#define GUM_DUK_SCOPE_INIT(C) { C, (C)->current_ctx, NULL }
+#define GUM_DUK_SCOPE_INIT(C) { C, 0, (C)->current_ctx, NULL }
 
 G_BEGIN_DECLS
 
@@ -37,6 +37,7 @@ typedef guint GumDukCpuContextAccess;
 typedef struct _GumDukNativeResource GumDukNativeResource;
 
 typedef void (* GumDukWeakNotify) (gpointer data);
+typedef void (* GumDukFlushNotify) (GumDukScript * script);
 typedef void (* GumDukMessageEmitter) (GumDukScript * script,
     const gchar * message, GBytes * data);
 
@@ -51,14 +52,22 @@ struct _GumDukCore
   duk_context * heap_ctx;
   duk_context * current_ctx;
 
-  GMutex mutex;
+  GRecMutex mutex;
+  volatile guint usage_count;
+  volatile guint mutex_depth;
+  volatile gboolean heap_thread_in_use;
+  volatile GumDukFlushNotify flush_notify;
 
+  GMutex event_mutex;
   GCond event_cond;
   volatile guint event_count;
-  gboolean heap_thread_in_use;
 
   GumDukExceptionSink * unhandled_exception_sink;
   GumDukMessageSink * incoming_message_sink;
+
+  GumDukHeapPtr on_global_enumerate;
+  GumDukHeapPtr on_global_get;
+  GumDukHeapPtr global_receiver;
 
   GHashTable * weak_refs;
   guint last_weak_ref_id;
@@ -80,6 +89,7 @@ struct _GumDukCore
 struct _GumDukScope
 {
   GumDukCore * core;
+  guint previous_mutex_depth;
   duk_context * ctx;
   GumDukHeapPtr exception;
   duk_thread_state thread_state;
@@ -134,9 +144,13 @@ G_GNUC_INTERNAL void _gum_duk_core_init (GumDukCore * self,
     GumDukScript * script, GumDukInterceptor * interceptor,
     GumDukMessageEmitter message_emitter, GumScriptScheduler * scheduler,
     duk_context * ctx);
-G_GNUC_INTERNAL void _gum_duk_core_flush (GumDukCore * self);
+G_GNUC_INTERNAL gboolean _gum_duk_core_flush (GumDukCore * self,
+    GumDukFlushNotify flush_notify);
 G_GNUC_INTERNAL void _gum_duk_core_dispose (GumDukCore * self);
 G_GNUC_INTERNAL void _gum_duk_core_finalize (GumDukCore * self);
+
+G_GNUC_INTERNAL void _gum_duk_core_pin (GumDukCore * self);
+G_GNUC_INTERNAL void _gum_duk_core_unpin (GumDukCore * self);
 
 G_GNUC_INTERNAL void _gum_duk_core_post_message (GumDukCore * self,
     const gchar * message);

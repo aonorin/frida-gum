@@ -29,6 +29,9 @@
         const msgSendSuperBySignatureId = {};
         let cachedNSString = null;
         let cachedNSStringCtor = null;
+        let cachedNSNumber = null;
+        let cachedNSNumberCtor = null;
+        let singularTypeById = null;
         const PRIV = Symbol('priv');
 
         Object.defineProperty(this, 'available', {
@@ -127,6 +130,7 @@
 
         this.schedule = function (queue, work) {
             const NSAutoreleasePool = this.classes.NSAutoreleasePool;
+
             const workCallback = new NativeCallback(function () {
                 const pool = NSAutoreleasePool.alloc().init();
                 let pendingException = null;
@@ -136,14 +140,19 @@
                     pendingException = e;
                 }
                 pool.release();
+
                 setTimeout(function () {
+                    Script.unpin();
                     scheduledCallbacks.splice(scheduledCallbacks.indexOf(workCallback), 1);
+
+                    if (pendingException !== null) {
+                        throw pendingException;
+                    }
                 }, 0);
-                if (pendingException !== null) {
-                    throw pendingException;
-                }
             }, 'void', ['pointer']);
+
             scheduledCallbacks.push(workCallback);
+            Script.pin();
             api.dispatch_async_f(queue, NULL, workCallback);
         };
 
@@ -176,19 +185,16 @@
             const cachedClasses = {};
             let numCachedClasses = 0;
 
-            const original = this;
-            const registry = new Proxy(original, {
-                has(targetOrName, name) {
-                    /* workaround for v8 passing only a single argument */
-                    const propName = (name !== undefined) ? name : targetOrName;
-                    return hasProperty(propName);
+            const registry = new Proxy(this, {
+                has(target, property) {
+                    return hasProperty(property);
                 },
-                get(target, name) {
-                    switch (name) {
+                get(target, property, receiver) {
+                    switch (property) {
                         case "prototype":
-                            return original.prototype;
+                            return target.prototype;
                         case "constructor":
-                            return original.constructor;
+                            return target.constructor;
                         case "hasOwnProperty":
                             return hasProperty;
                         case "toJSON":
@@ -198,28 +204,14 @@
                         case "valueOf":
                             return valueOf;
                         default:
-                            const klass = findClass(name);
+                            const klass = findClass(property);
                             return (klass !== null) ? klass : undefined;
                     }
                 },
-                set(target, name, value) {
-                    throw new Error("Invalid operation");
+                set(target, property, value, receiver) {
+                    return false;
                 },
-                enumerate() {
-                    return this.keys();
-                },
-                iterate() {
-                    const props = this.keys();
-                    let i = 0;
-                    return {
-                        next() {
-                            if (i === props.length)
-                                throw StopIteration;
-                            return props[i++];
-                        }
-                    };
-                },
-                keys() {
+                ownKeys(target) {
                     let numClasses = api.objc_getClassList(NULL, 0);
                     if (numClasses !== numCachedClasses) {
                         // It's impossible to unregister classes in ObjC, so if the number of
@@ -234,12 +226,20 @@
                     }
                     return Object.keys(cachedClasses);
                 },
-                ownKeys() {
-                     return this.keys();
+                getOwnPropertyDescriptor(target, property) {
+                    return {
+                        writable: false,
+                        configurable: true,
+                        enumerable: true
+                    };
                 },
-                getOwnPropertyNames() {
-                    return this.keys();
-                }
+                // Duktape needs these two legacy traps:
+                enumerate(target) {
+                    return this.ownKeys();
+                },
+                keys(target) {
+                    return this.ownKeys();
+                },
             });
 
             function hasProperty(name) {
@@ -285,19 +285,16 @@
         function ProtocolRegistry() {
             let cachedProtocols = {};
 
-            const original = this;
-            const registry = new Proxy(original, {
-                has(targetOrName, name) {
-                    /* workaround for v8 passing only a single argument */
-                    const propName = (name !== undefined) ? name : targetOrName;
-                    return hasProperty(propName);
+            const registry = new Proxy(this, {
+                has(target, property) {
+                    return hasProperty(property);
                 },
-                get(target, name) {
-                    switch (name) {
+                get(target, property, receiver) {
+                    switch (property) {
                         case "prototype":
-                            return original.prototype;
+                            return target.prototype;
                         case "constructor":
-                            return original.constructor;
+                            return target.constructor;
                         case "hasOwnProperty":
                             return hasProperty;
                         case "toJSON":
@@ -307,28 +304,14 @@
                         case "valueOf":
                             return valueOf;
                         default:
-                            const proto = findProtocol(name);
+                            const proto = findProtocol(property);
                             return (proto !== null) ? proto : undefined;
                     }
                 },
-                set(target, name, value) {
-                    throw new Error("Invalid operation");
+                set(target, property, value, receiver) {
+                    return false;
                 },
-                enumerate() {
-                    return this.keys();
-                },
-                iterate() {
-                    const props = this.keys();
-                    let i = 0;
-                    return {
-                        next() {
-                            if (i === props.length)
-                                throw StopIteration;
-                            return props[i++];
-                        }
-                    };
-                },
-                keys() {
+                ownKeys(target) {
                     const protocolNames = [];
                     cachedProtocols = {};
                     const numProtocolsBuf = Memory.alloc(pointerSize);
@@ -346,9 +329,20 @@
                     }
                     return protocolNames;
                 },
-                ownKeys() {
-                     return this.keys();
-                }
+                getOwnPropertyDescriptor(target, property) {
+                    return {
+                        writable: false,
+                        configurable: true,
+                        enumerable: true
+                    };
+                },
+                // Duktape needs these two legacy traps:
+                enumerate(target) {
+                    return this.ownKeys();
+                },
+                keys(target) {
+                    return this.ownKeys();
+                },
             });
 
             function hasProperty(name) {
@@ -436,24 +430,18 @@
                 }
             }
 
-            const original = this;
-            const self = new Proxy(original, {
-                has(targetOrName, name) {
-                    /* workaround for v8 passing only a single argument */
-                    const propName = (name !== undefined) ? name : targetOrName;
-                    return hasProperty(propName);
+            const self = new Proxy(this, {
+                has(target, property) {
+                    return hasProperty(property);
                 },
-                get(target, name, receiver) {
-                    /* V8 kludge */
-                    if (receiver === undefined)
-                        receiver = self;
-                    switch (name) {
+                get(target, property, receiver) {
+                    switch (property) {
                         case "handle":
                             return handle;
                         case "prototype":
-                            return original.prototype;
+                            return target.prototype;
                         case "constructor":
-                            return original.constructor;
+                            return target.constructor;
                         case "hasOwnProperty":
                             return hasProperty;
                         case "toJSON":
@@ -573,34 +561,20 @@
                             return cachedIvars;
                         default:
                             if (protocol) {
-                                const details = findProtocolMethod(name);
+                                const details = findProtocolMethod(property);
                                 if (details === null || !details.implemented)
                                     return undefined;
                             }
-                            const wrapper = findMethodWrapper(name);
+                            const wrapper = findMethodWrapper(property);
                             if (wrapper === null)
                                 return undefined;
                             return wrapper;
                     }
                 },
-                set(target, name, value) {
-                    throw new Error("Invalid operation");
+                set(target, property, value, receiver) {
+                    return false;
                 },
-                enumerate() {
-                    return this.keys();
-                },
-                iterate() {
-                    const props = this.keys();
-                    let i = 0;
-                    return {
-                        next() {
-                            if (i === props.length)
-                                throw StopIteration;
-                            return props[i++];
-                        }
-                    };
-                },
-                keys() {
+                ownKeys(target) {
                     if (cachedMethodNames === null) {
                         if (!protocol) {
                             const jsNames = {};
@@ -666,9 +640,20 @@
 
                     return ['handle'].concat(cachedMethodNames);
                 },
-                ownKeys() {
-                    return this.keys();
-                }
+                getOwnPropertyDescriptor(target, property) {
+                    return {
+                        writable: false,
+                        configurable: true,
+                        enumerable: true
+                    };
+                },
+                // Duktape needs these two legacy traps:
+                enumerate(target) {
+                    return this.ownKeys();
+                },
+                keys(target) {
+                    return this.ownKeys();
+                },
             });
 
             if (protocol) {
@@ -1059,22 +1044,16 @@
                 }
             });
 
-            const original = this;
-            const self = new Proxy(original, {
-                has(targetOrName, name) {
-                    /* workaround for v8 passing only a single argument */
-                    const propName = (name !== undefined) ? name : targetOrName;
-                    return hasProperty(propName);
+            const self = new Proxy(this, {
+                has(target, property) {
+                    return hasProperty(property);
                 },
-                get(target, name, receiver) {
-                    /* V8 kludge */
-                    if (receiver === undefined)
-                        receiver = self;
-                    switch (name) {
+                get(target, property, receiver) {
+                    switch (property) {
                         case "prototype":
-                            return original.prototype;
+                            return target.prototype;
                         case "constructor":
-                            return original.constructor;
+                            return target.constructor;
                         case "hasOwnProperty":
                             return hasProperty;
                         case "toJSON":
@@ -1084,39 +1063,36 @@
                         case "valueOf":
                             return valueOf;
                         default:
-                            const ivar = findIvar(name);
+                            const ivar = findIvar(property);
                             if (ivar === null)
                                 return undefined;
                             return ivar.get();
                     }
                 },
-                set(target, name, value) {
-                    const ivar = findIvar(name);
+                set(target, property, value, receiver) {
+                    const ivar = findIvar(property);
                     if (ivar === null)
                         throw new Error("Unknown ivar");
                     ivar.set(value);
                     return true;
                 },
-                enumerate() {
-                    return this.keys();
-                },
-                iterate() {
-                    const props = this.keys();
-                    let i = 0;
-                    return {
-                        next() {
-                            if (i === props.length)
-                                throw StopIteration;
-                            return props[i++];
-                        }
-                    };
-                },
-                keys() {
+                ownKeys(target) {
                     return Object.keys(ivars);
                 },
-                ownKeys() {
-                    return this.keys();
-                }
+                getOwnPropertyDescriptor(target, property) {
+                    return {
+                        writable: true,
+                        configurable: true,
+                        enumerable: true
+                    };
+                },
+                // Duktape needs these two legacy traps:
+                enumerate(target) {
+                    return this.ownKeys();
+                },
+                keys(target) {
+                    return this.ownKeys();
+                },
             });
 
             return self;
@@ -1311,6 +1287,10 @@
                     this.data.target.release();
                     unbind(this.self);
                     this.super.dealloc();
+
+                    const callback = this.data.events.dealloc;
+                    if (callback !== undefined)
+                        callback.call(this);
                 },
                 '- respondsToSelector:': function (sel) {
                     return this.data.target.respondsToSelector_(sel);
@@ -1965,50 +1945,54 @@
         }
 
         function readType(cursor) {
-            while (true) {
-                let id = readChar(cursor);
-                if (id === '@') {
-                    let next = peekChar(cursor);
-                    if (next === '?') {
-                        id += next;
-                        skipChar(cursor);
-                    } else if (next === '"') {
-                        skipChar(cursor);
-                        readUntil('"', cursor);
-                    }
+            let id = readChar(cursor);
+            if (id === '@') {
+                let next = peekChar(cursor);
+                if (next === '?') {
+                    id += next;
+                    skipChar(cursor);
+                } else if (next === '"') {
+                    skipChar(cursor);
+                    readUntil('"', cursor);
                 }
+            } else if (id === '^') {
+                let next = peekChar(cursor);
+                if (next === '@') {
+                    id += next;
+                    skipChar(cursor);
+                }
+            }
 
-                const type = singularTypeById[id];
-                if (type !== undefined) {
-                    return type;
-                } else if (id === '[') {
-                    const length = readNumber(cursor);
-                    const elementType = readType(cursor);
-                    skipChar(cursor); // ']'
-                    return arrayType(length, elementType);
-                } else if (id === '{') {
-                    readUntil('=', cursor);
-                    const structFields = [];
-                    while (peekChar(cursor) !== '}')
-                        structFields.push(readType(cursor));
-                    skipChar(cursor); // '}'
-                    return structType(structFields);
-                } else if (id === '(') {
-                    readUntil('=', cursor);
-                    const unionFields = [];
-                    while (peekChar(cursor) !== '}')
-                        unionFields.push(readType(cursor));
-                    skipChar(cursor); // ')'
-                    return unionType(unionFields);
-                } else if (id === 'b') {
-                    readNumber(cursor);
-                    return singularTypeById.i;
-                } else if (id === '^') {
-                    readType(cursor);
-                    return singularTypeById['?'];
-                } else {
-                    throw new Error("Unable to handle type " + id);
-                }
+            const type = singularTypeById[id];
+            if (type !== undefined) {
+                return type;
+            } else if (id === '[') {
+                const length = readNumber(cursor);
+                const elementType = readType(cursor);
+                skipChar(cursor); // ']'
+                return arrayType(length, elementType);
+            } else if (id === '{') {
+                readUntil('=', cursor);
+                const structFields = [];
+                while (peekChar(cursor) !== '}')
+                    structFields.push(readType(cursor));
+                skipChar(cursor); // '}'
+                return structType(structFields);
+            } else if (id === '(') {
+                readUntil('=', cursor);
+                const unionFields = [];
+                while (peekChar(cursor) !== '}')
+                    unionFields.push(readType(cursor));
+                skipChar(cursor); // ')'
+                return unionType(unionFields);
+            } else if (id === 'b') {
+                readNumber(cursor);
+                return singularTypeById.i;
+            } else if (id === '^') {
+                readType(cursor);
+                return singularTypeById['?'];
+            } else {
+                throw new Error("Unable to handle type " + id);
             }
         }
 
@@ -2081,12 +2065,12 @@
             'char': 'c',
             'int': 'i',
             'int16': 's',
-            'int32': 'l',
+            'int32': 'i',
             'int64': 'q',
             'uchar': 'C',
             'uint': 'I',
             'uint16': 'S',
-            'uint32': 'L',
+            'uint32': 'I',
             'uint64': 'Q',
             'float': 'f',
             'double': 'd',
@@ -2121,15 +2105,24 @@
         };
 
         const toNativeId = function (v) {
-            if (v === null) {
+            if (v === null)
                 return NULL;
-            } else if (typeof v === 'string') {
+
+            const type = typeof v;
+            if (type === 'string') {
                 if (cachedNSString === null) {
                     cachedNSString = classRegistry.NSString;
                     cachedNSStringCtor = cachedNSString.stringWithUTF8String_;
                 }
                 return cachedNSStringCtor.call(cachedNSString, Memory.allocUtf8String(v));
+            } else if (type === 'number') {
+                if (cachedNSNumber === null) {
+                    cachedNSNumber = classRegistry.NSNumber;
+                    cachedNSNumberCtor = cachedNSNumber.numberWithDouble_;
+                }
+                return cachedNSNumberCtor.call(cachedNSNumber, v);
             }
+
             return v;
         };
 
@@ -2145,6 +2138,18 @@
 
         const toNativeBlock = function (v) {
             return (v !== null) ? v : NULL;
+        };
+
+        const toNativeObjectArray = function (v) {
+            if (v instanceof Array) {
+                const length = v.length;
+                const array = Memory.alloc(length * pointerSize);
+                for (let i = 0; i !== length; i++)
+                    Memory.writePointer(array.add(i * pointerSize), toNativeId(v[i]));
+                return array;
+            }
+
+            return v;
         };
 
         function arrayType(length, elementType) {
@@ -2274,7 +2279,9 @@
             };
         }
 
-        const singularTypeById = {
+        const longBits = (pointerSize == 8 && Process.platform !== 'windows') ? 64 : 32;
+
+        singularTypeById = {
             'c': {
                 type: 'char',
                 size: 1,
@@ -2330,10 +2337,10 @@
                 write: Memory.writeU16
             },
             'L': {
-                type: 'uint32',
-                size: 4,
-                read: Memory.readU32,
-                write: Memory.writeU32
+                type: 'uint' + longBits,
+                size: longBits / 8,
+                read: Memory.readULong,
+                write: Memory.writeULong
             },
             'Q': {
                 type: 'uint64',
@@ -2396,6 +2403,13 @@
                 write: Memory.writePointer,
                 fromNative: fromNativeBlock,
                 toNative: toNativeBlock
+            },
+            '^@': {
+                type: 'pointer',
+                size: pointerSize,
+                read: Memory.readPointer,
+                write: Memory.writePointer,
+                toNative: toNativeObjectArray
             },
             '#': {
                 type: 'pointer',

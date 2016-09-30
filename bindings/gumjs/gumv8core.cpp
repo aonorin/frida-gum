@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2015 Ole André Vadla Ravnås <ole.andre.ravnas@tillitech.com>
+ * Copyright (C) 2010-2016 Ole André Vadla Ravnås <oleavr@nowsecure.com>
  * Copyright (C) 2015 Asger Hautop Drewsen <asgerdrewsen@gmail.com>
  * Copyright (C) 2015 Marc Hartmayer <hello@hartmayer.com>
  *
@@ -22,11 +22,9 @@
 
 #define GUM_MAX_SEND_ARRAY_LENGTH (1024 * 1024)
 
-#define GUM_V8_CORE_LOCK()   (g_mutex_lock (&self->mutex))
-#define GUM_V8_CORE_UNLOCK() (g_mutex_unlock (&self->mutex))
-
 using namespace v8;
 
+typedef struct _GumFlushCallback GumFlushCallback;
 typedef struct _GumWeakRef GumWeakRef;
 typedef struct _GumFFIFunction GumFFIFunction;
 typedef struct _GumFFICallback GumFFICallback;
@@ -34,6 +32,12 @@ typedef union _GumFFIValue GumFFIValue;
 typedef struct _GumFFITypeMapping GumFFITypeMapping;
 typedef struct _GumFFIABIMapping GumFFIABIMapping;
 typedef struct _GumCpuContextWrapper GumCpuContextWrapper;
+
+struct _GumFlushCallback
+{
+  GumV8FlushNotify func;
+  GumV8Script * script;
+};
 
 struct _GumWeakRef
 {
@@ -126,6 +130,21 @@ struct _GumCpuContextWrapper
   GumCpuContext * cpu_context;
 };
 
+static gboolean gum_v8_core_notify_flushed_when_idle (gpointer user_data);
+
+static void gum_v8_core_on_script_set_global_access_handler (
+    const FunctionCallbackInfo<Value> & info);
+static void gum_v8_core_on_global_get (Local<Name> property,
+    const PropertyCallbackInfo<Value> & info);
+static void gum_v8_core_on_global_query (Local<Name> property,
+    const PropertyCallbackInfo<Integer> & info);
+static void gum_v8_core_on_global_enumerate (
+    const PropertyCallbackInfo<Array> & info);
+
+static void gum_v8_core_on_script_pin (
+    const FunctionCallbackInfo<Value> & info);
+static void gum_v8_core_on_script_unpin (
+    const FunctionCallbackInfo<Value> & info);
 static void gum_v8_core_on_script_get_file_name (
     Local<String> property, const PropertyCallbackInfo<Value> & info);
 static void gum_v8_core_on_script_get_source_map_data (
@@ -139,8 +158,8 @@ static GumWeakRef * gum_weak_ref_new (guint id, Handle<Value> target,
     Handle<Function> callback, GumV8Core * core);
 static void gum_weak_ref_clear (GumWeakRef * ref);
 static void gum_weak_ref_free (GumWeakRef * ref);
-static void gum_weak_ref_on_weak_notify (const WeakCallbackData<Value,
-    GumWeakRef> & data);
+static void gum_weak_ref_on_weak_notify (
+    const WeakCallbackInfo<GumWeakRef> & info);
 static void gum_v8_core_on_set_timeout (
     const FunctionCallbackInfo<Value> & info);
 static void gum_v8_core_on_set_interval (
@@ -245,7 +264,7 @@ static void gum_v8_core_on_native_pointer_to_match_pattern (
 static void gum_v8_core_on_new_native_function (
     const FunctionCallbackInfo<Value> & info);
 static void gum_ffi_function_on_weak_notify (
-    const WeakCallbackData<Object, GumFFIFunction> & data);
+    const WeakCallbackInfo<GumFFIFunction> & info);
 static void gum_v8_core_on_invoke_native_function (
     const FunctionCallbackInfo<Value> & info);
 static void gum_ffi_function_free (GumFFIFunction * func);
@@ -253,7 +272,7 @@ static void gum_ffi_function_free (GumFFIFunction * func);
 static void gum_v8_core_on_new_native_callback (
     const FunctionCallbackInfo<Value> & info);
 static void gum_v8_core_on_free_native_callback (
-    const WeakCallbackData<Object, GumFFICallback> & data);
+    const WeakCallbackInfo<GumFFICallback> & info);
 static void gum_v8_core_on_invoke_native_callback (ffi_cif * cif,
     void * return_value, void ** args, void * user_data);
 static void gum_ffi_callback_free (GumFFICallback * callback);
@@ -265,8 +284,8 @@ static void gum_v8_core_on_cpu_context_get_register (Local<String> property,
 static void gum_v8_core_on_cpu_context_set_register (Local<String> property,
     Local<Value> value, const PropertyCallbackInfo<void> & info);
 
-static GumV8ExceptionSink * gum_v8_exception_sink_new (Handle<Function> callback,
-    Isolate * isolate);
+static GumV8ExceptionSink * gum_v8_exception_sink_new (
+    Handle<Function> callback, Isolate * isolate);
 static void gum_v8_exception_sink_free (GumV8ExceptionSink * sink);
 static void gum_v8_exception_sink_handle_exception (GumV8ExceptionSink * self,
     Handle<Value> exception);
@@ -287,7 +306,7 @@ static gboolean gum_v8_value_from_ffi_type (GumV8Core * core,
     Handle<Value> * svalue, const GumFFIValue * value, const ffi_type * type);
 
 static void gum_v8_native_resource_on_weak_notify (
-    const WeakCallbackData<Object, GumV8NativeResource> & data);
+    const WeakCallbackInfo<GumV8NativeResource> & info);
 
 static gint64 gum_v8_int64_get_value (Handle<Object> object);
 static void gum_v8_int64_set_value (Handle<Object> object, gint64 value,
@@ -299,8 +318,8 @@ static void gum_v8_uint64_set_value (Handle<Object> object, guint64 value,
 
 static const gchar * gum_exception_type_to_string (GumExceptionType type);
 
-static void gum_cpu_context_on_weak_notify (const WeakCallbackData<Object,
-    GumCpuContextWrapper> & data);
+static void gum_cpu_context_on_weak_notify (
+    const WeakCallbackInfo<GumCpuContextWrapper> & info);
 
 void
 _gum_v8_core_init (GumV8Core * self,
@@ -317,8 +336,12 @@ _gum_v8_core_init (GumV8Core * self,
   self->exceptor = gum_exceptor_obtain ();
   self->isolate = isolate;
 
-  g_mutex_init (&self->mutex);
+  self->usage_count = 0;
+  self->flush_notify = NULL;
+
+  g_mutex_init (&self->event_mutex);
   g_cond_init (&self->event_cond);
+  self->event_count = 0;
 
   self->weak_refs = g_hash_table_new_full (NULL, NULL, NULL,
       reinterpret_cast<GDestroyNotify> (gum_weak_ref_free));
@@ -331,12 +354,26 @@ _gum_v8_core_init (GumV8Core * self,
   scope->Set (String::NewFromUtf8 (isolate, "Frida"), frida);
 
   Handle<ObjectTemplate> script_module = ObjectTemplate::New ();
+  script_module->Set (String::NewFromUtf8 (isolate, "pin"),
+      FunctionTemplate::New (isolate, gum_v8_core_on_script_pin, data));
+  script_module->Set (String::NewFromUtf8 (isolate, "unpin"),
+      FunctionTemplate::New (isolate, gum_v8_core_on_script_unpin, data));
   script_module->Set (String::NewFromUtf8 (isolate, "runtime"),
       String::NewFromUtf8 (isolate, "V8"), ReadOnly);
   script_module->SetAccessor (String::NewFromUtf8 (isolate, "fileName"),
       gum_v8_core_on_script_get_file_name, NULL, data);
   script_module->SetAccessor (String::NewFromUtf8 (isolate, "_sourceMapData"),
       gum_v8_core_on_script_get_source_map_data, NULL, data);
+  script_module->Set (String::NewFromUtf8 (isolate, "setGlobalAccessHandler"),
+      FunctionTemplate::New (isolate,
+          gum_v8_core_on_script_set_global_access_handler, data));
+  NamedPropertyHandlerConfiguration global_access;
+  global_access.getter = gum_v8_core_on_global_get;
+  global_access.query = gum_v8_core_on_global_query;
+  global_access.enumerator = gum_v8_core_on_global_enumerate;
+  global_access.data = data;
+  global_access.flags = PropertyHandlerFlags::kNonMasking;
+  scope->SetHandler (global_access);
   scope->Set (String::NewFromUtf8 (isolate, "Script"), script_module);
 
   Handle<ObjectTemplate> weak = ObjectTemplate::New ();
@@ -697,52 +734,83 @@ _gum_v8_core_realize (GumV8Core * self)
       cpu_context_value);
 }
 
-void
-_gum_v8_core_flush (GumV8Core * self)
+gboolean
+_gum_v8_core_flush (GumV8Core * self,
+                    GumV8FlushNotify flush_notify)
 {
-  GMainContext * context =
-      gum_script_scheduler_get_js_context (self->scheduler);
+  gboolean done;
 
-  self->isolate->Exit ();
-  {
-    Unlocker ul (self->isolate);
+  self->flush_notify = flush_notify;
 
-    while (g_main_context_pending (context))
-      g_main_context_iteration (context, FALSE);
-
-    gum_script_scheduler_flush_by_tag (self->scheduler, self);
-  }
-  self->isolate->Enter ();
+  if (self->usage_count > 1)
+    return FALSE;
 
   while (self->scheduled_callbacks != NULL)
   {
     GumV8ScheduledCallback * callback = static_cast<GumV8ScheduledCallback *> (
         self->scheduled_callbacks->data);
+    GSource * source;
 
     self->scheduled_callbacks = g_slist_delete_link (
         self->scheduled_callbacks, self->scheduled_callbacks);
+
+    source = g_source_ref (callback->source);
+
+    _gum_v8_core_pin (self);
 
     self->isolate->Exit ();
     {
       Unlocker ul (self->isolate);
 
-      g_source_destroy (callback->source);
+      g_source_destroy (source);
+      g_source_unref (source);
     }
     self->isolate->Enter ();
   }
 
-  self->isolate->Exit ();
-  {
-    Unlocker ul (self->isolate);
-
-    while (g_main_context_pending (context))
-      g_main_context_iteration (context, FALSE);
-  }
-  self->isolate->Enter ();
+  if (self->usage_count > 1)
+    return FALSE;
 
   g_hash_table_foreach (self->weak_refs,
       (GHFunc) gum_v8_core_clear_weak_ref_entry, NULL);
   g_hash_table_remove_all (self->weak_refs);
+
+  done = self->usage_count == 1;
+  if (done)
+    self->flush_notify = NULL;
+
+  return done;
+}
+
+void
+_gum_v8_core_notify_flushed (GumV8Core * self,
+                             GumV8FlushNotify func)
+{
+  GumFlushCallback * callback;
+  GSource * source;
+
+  callback = g_slice_new (GumFlushCallback);
+  callback->func = func;
+  callback->script = self->script;
+
+  source = g_idle_source_new ();
+  g_source_set_callback (source, gum_v8_core_notify_flushed_when_idle, callback,
+      NULL);
+  g_source_attach (source,
+      gum_script_scheduler_get_js_context (self->scheduler));
+  g_source_unref (source);
+}
+
+static gboolean
+gum_v8_core_notify_flushed_when_idle (gpointer user_data)
+{
+  GumFlushCallback * callback = (GumFlushCallback *) user_data;
+
+  callback->func (callback->script);
+
+  g_slice_free (GumFlushCallback, callback);
+
+  return FALSE;
 }
 
 void
@@ -763,19 +831,26 @@ _gum_v8_core_dispose (GumV8Core * self)
   gum_v8_message_sink_free (self->incoming_message_sink);
   self->incoming_message_sink = NULL;
 
+  delete self->on_global_enumerate;
+  delete self->on_global_get;
+  delete self->global_receiver;
+  self->on_global_enumerate = nullptr;
+  self->on_global_get = nullptr;
+  self->global_receiver = nullptr;
+
   delete self->int64_value;
-  self->int64_value = NULL;
+  self->int64_value = nullptr;
 
   delete self->uint64_value;
-  self->uint64_value = NULL;
+  self->uint64_value = nullptr;
 
   delete self->handle_key;
   delete self->native_pointer_value;
-  self->handle_key = NULL;
-  self->native_pointer_value = NULL;
+  self->handle_key = nullptr;
+  self->native_pointer_value = nullptr;
 
   delete self->cpu_context_value;
-  self->cpu_context_value = NULL;
+  self->cpu_context_value = nullptr;
 }
 
 void
@@ -799,8 +874,20 @@ _gum_v8_core_finalize (GumV8Core * self)
   g_object_unref (self->exceptor);
   self->exceptor = NULL;
 
-  g_mutex_clear (&self->mutex);
+  g_mutex_clear (&self->event_mutex);
   g_cond_clear (&self->event_cond);
+}
+
+void
+_gum_v8_core_pin (GumV8Core * self)
+{
+  self->usage_count++;
+}
+
+void
+_gum_v8_core_unpin (GumV8Core * self)
+{
+  self->usage_count--;
 }
 
 void
@@ -833,11 +920,29 @@ _gum_v8_core_post_message (GumV8Core * self,
 
   if (delivered)
   {
-    GUM_V8_CORE_LOCK ();
+    g_mutex_lock (&self->event_mutex);
     self->event_count++;
     g_cond_broadcast (&self->event_cond);
-    GUM_V8_CORE_UNLOCK ();
+    g_mutex_unlock (&self->event_mutex);
   }
+}
+
+static void
+gum_v8_core_on_script_pin (const FunctionCallbackInfo<Value> & info)
+{
+  GumV8Core * self = static_cast<GumV8Core *> (
+      info.Data ().As<External> ()->Value ());
+
+  _gum_v8_core_pin (self);
+}
+
+static void
+gum_v8_core_on_script_unpin (const FunctionCallbackInfo<Value> & info)
+{
+  GumV8Core * self = static_cast<GumV8Core *> (
+      info.Data ().As<External> ()->Value ());
+
+  _gum_v8_core_unpin (self);
 }
 
 static void
@@ -905,6 +1010,116 @@ gum_v8_core_on_script_get_source_map_data (
     info.GetReturnValue ().Set (result);
   else
     info.GetReturnValue ().SetNull ();
+}
+
+static void
+gum_v8_core_on_script_set_global_access_handler (
+    const FunctionCallbackInfo<Value> & info)
+{
+  GumV8Core * self = static_cast<GumV8Core *> (
+      info.Data ().As<External> ()->Value ());
+  Isolate * isolate = info.GetIsolate ();
+
+  if (info.Length () == 0 || !info[0]->IsObject ())
+  {
+    isolate->ThrowException (Exception::TypeError (String::NewFromUtf8 (
+        isolate, "expected an object with callbacks, or null")));
+    return;
+  }
+
+  Local<Object> callbacks (info[0].As<Object> ());
+  Local<Function> on_enumerate, on_get;
+  bool has_callbacks = !callbacks->IsNull ();
+  if (has_callbacks)
+  {
+    if (!_gum_v8_callbacks_get (callbacks, "enumerate", &on_enumerate, self))
+      return;
+    if (!_gum_v8_callbacks_get (callbacks, "get", &on_get, self))
+      return;
+  }
+
+  delete self->on_global_enumerate;
+  delete self->on_global_get;
+  delete self->global_receiver;
+  self->on_global_enumerate = nullptr;
+  self->on_global_get = nullptr;
+  self->global_receiver = nullptr;
+
+  if (has_callbacks)
+  {
+    self->on_global_enumerate = new GumPersistent<Function>::type (isolate,
+        on_enumerate.As<Function> ());
+    self->on_global_get = new GumPersistent<Function>::type (isolate,
+        on_get.As<Function> ());
+    self->global_receiver = new GumPersistent<Object>::type (isolate,
+        callbacks);
+  }
+}
+
+static void
+gum_v8_core_on_global_get (Local<Name> property,
+                           const PropertyCallbackInfo<Value> & info)
+{
+  GumV8Core * self = static_cast<GumV8Core *> (
+      info.Data ().As<External> ()->Value ());
+
+  if (self->on_global_get == nullptr)
+    return;
+
+  Isolate * isolate = info.GetIsolate ();
+
+  Local<Function> get (Local<Function>::New (isolate, *self->on_global_get));
+  Local<Object> receiver (Local<Object>::New (isolate, *self->global_receiver));
+  Handle<Value> argv[] = { property };
+  Local<Value> result = get->Call (receiver, 1, argv);
+  if (!result.IsEmpty () && !result->IsUndefined ())
+  {
+    info.GetReturnValue ().Set (result);
+  }
+}
+
+static void
+gum_v8_core_on_global_query (Local<Name> property,
+                             const PropertyCallbackInfo<Integer> & info)
+{
+  GumV8Core * self = static_cast<GumV8Core *> (
+      info.Data ().As<External> ()->Value ());
+
+  if (self->on_global_get == nullptr)
+    return;
+
+  Isolate * isolate = info.GetIsolate ();
+
+  Local<Function> get (Local<Function>::New (isolate, *self->on_global_get));
+  Local<Object> receiver (Local<Object>::New (isolate, *self->global_receiver));
+  Handle<Value> argv[] = { property };
+  Local<Value> result = get->Call (receiver, 1, argv);
+  if (!result.IsEmpty () && !result->IsUndefined ())
+  {
+    info.GetReturnValue ().Set (PropertyAttribute::ReadOnly |
+        PropertyAttribute::DontDelete);
+  }
+}
+
+static void
+gum_v8_core_on_global_enumerate (const PropertyCallbackInfo<Array> & info)
+{
+  GumV8Core * self = static_cast<GumV8Core *> (
+      info.Data ().As<External> ()->Value ());
+
+  if (self->on_global_enumerate == nullptr)
+    return;
+
+  Isolate * isolate = info.GetIsolate ();
+
+  Local<Function> enumerate (
+      Local<Function>::New (isolate, *self->on_global_enumerate));
+  Local<Object> receiver (Local<Object>::New (isolate, *self->global_receiver));
+  Local<Value> result = enumerate->Call (receiver, 0, nullptr);
+  if (!result.IsEmpty () && result->IsArray ())
+  {
+    info.GetReturnValue ().Set (result.As<Array> ());
+  }
 }
 
 /*
@@ -1002,7 +1217,8 @@ gum_weak_ref_new (guint id,
   ref = g_slice_new (GumWeakRef);
   ref->id = id;
   ref->target = new GumPersistent<Value>::type (isolate, target);
-  ref->target->SetWeak (ref, gum_weak_ref_on_weak_notify);
+  ref->target->SetWeak (ref, gum_weak_ref_on_weak_notify,
+      WeakCallbackType::kParameter);
   ref->target->MarkIndependent ();
   ref->callback = new GumPersistent<Function>::type (isolate, callback);
   ref->core = core;
@@ -1015,7 +1231,6 @@ gum_weak_ref_clear (GumWeakRef * ref)
 {
   if (ref->target != nullptr)
   {
-    ref->target->ClearWeak ();
     delete ref->target;
     ref->target = nullptr;
   }
@@ -1038,10 +1253,9 @@ gum_weak_ref_free (GumWeakRef * ref)
 }
 
 static void
-gum_weak_ref_on_weak_notify (const WeakCallbackData<Value,
-                             GumWeakRef> & data)
+gum_weak_ref_on_weak_notify (const WeakCallbackInfo<GumWeakRef> & info)
 {
-  GumWeakRef * self = data.GetParameter ();
+  GumWeakRef * self = info.GetParameter ();
 
   g_hash_table_remove (self->core->weak_refs, GUINT_TO_POINTER (self->id));
 }
@@ -1053,7 +1267,7 @@ _gum_v8_core_push_job (GumV8Core * self,
                        GDestroyNotify data_destroy)
 {
   gum_script_scheduler_push_job_on_thread_pool (self->scheduler, job_func,
-      data, data_destroy, self);
+      data, data_destroy);
 }
 
 static void
@@ -1064,12 +1278,19 @@ gum_v8_core_add_scheduled_callback (GumV8Core * self,
       g_slist_prepend (self->scheduled_callbacks, callback);
 }
 
-static void
+static gboolean
 gum_v8_core_remove_scheduled_callback (GumV8Core * self,
                                        GumV8ScheduledCallback * callback)
 {
+  GSList * link;
+
+  link = g_slist_find (self->scheduled_callbacks, callback);
+  if (link == NULL)
+    return FALSE;
+
   self->scheduled_callbacks =
-      g_slist_remove (self->scheduled_callbacks, callback);
+      g_slist_delete_link (self->scheduled_callbacks, link);
+  return TRUE;
 }
 
 static void
@@ -1192,7 +1413,22 @@ gum_v8_core_on_clear_timeout (const FunctionCallbackInfo<Value> & info)
   }
 
   if (callback != NULL)
-    g_source_destroy (callback->source);
+  {
+    GSource * source;
+
+    source = g_source_ref (callback->source);
+
+    _gum_v8_core_pin (self);
+
+    self->isolate->Exit ();
+    {
+      Unlocker ul (self->isolate);
+
+      g_source_destroy (source);
+      g_source_unref (source);
+    }
+    self->isolate->Enter ();
+  }
 
   info.GetReturnValue ().Set (callback != NULL);
 }
@@ -1217,9 +1453,18 @@ gum_v8_scheduled_callback_new (guint id,
 static void
 gum_v8_scheduled_callback_free (GumV8ScheduledCallback * callback)
 {
-  ScriptScope (callback->core->script);
-  delete callback->func;
-  delete callback->receiver;
+  GumV8Core * core = callback->core;
+
+  {
+    ScriptScope scope (core->script);
+
+    delete callback->func;
+    delete callback->receiver;
+
+    _gum_v8_core_unpin (core);
+  }
+
+  g_source_unref (callback->source);
 
   g_slice_free (GumV8ScheduledCallback, callback);
 }
@@ -1229,15 +1474,19 @@ gum_v8_scheduled_callback_invoke (gpointer user_data)
 {
   GumV8ScheduledCallback * self =
       static_cast<GumV8ScheduledCallback *> (user_data);
-  Isolate * isolate = self->core->isolate;
+  GumV8Core * core = self->core;
+  Isolate * isolate = core->isolate;
 
-  ScriptScope scope (self->core->script);
+  ScriptScope scope (core->script);
   Local<Function> func (Local<Function>::New (isolate, *self->func));
   Local<Value> receiver (Local<Value>::New (isolate, *self->receiver));
   func->Call (receiver, 0, NULL);
 
   if (!self->repeat)
-    gum_v8_core_remove_scheduled_callback (self->core, self);
+  {
+    if (gum_v8_core_remove_scheduled_callback (core, self))
+      _gum_v8_core_pin (core);
+  }
 
   return self->repeat;
 }
@@ -1398,11 +1647,11 @@ gum_v8_core_on_wait_for_event (const FunctionCallbackInfo<Value> & info)
   {
     Unlocker ul (self->isolate);
 
-    GUM_V8_CORE_LOCK ();
+    g_mutex_lock (&self->event_mutex);
     guint start_count = self->event_count;
     while (self->event_count == start_count)
-      g_cond_wait (&self->event_cond, &self->mutex);
-    GUM_V8_CORE_UNLOCK ();
+      g_cond_wait (&self->event_cond, &self->event_mutex);
+    g_mutex_unlock (&self->event_mutex);
   }
   self->isolate->Enter ();
 }
@@ -2244,7 +2493,8 @@ gum_v8_core_on_new_native_function (const FunctionCallbackInfo<Value> & info)
   instance->SetAlignedPointerInInternalField (1, func);
 
   func->weak_instance = new GumPersistent<Object>::type (isolate, instance);
-  func->weak_instance->SetWeak (func, gum_ffi_function_on_weak_notify);
+  func->weak_instance->SetWeak (func, gum_ffi_function_on_weak_notify,
+      WeakCallbackType::kParameter);
   func->weak_instance->MarkIndependent ();
 
   g_hash_table_insert (self->native_functions, func, func);
@@ -2257,10 +2507,10 @@ error:
 
 static void
 gum_ffi_function_on_weak_notify (
-    const WeakCallbackData<Object, GumFFIFunction> & data)
+    const WeakCallbackInfo<GumFFIFunction> & info)
 {
-  HandleScope handle_scope (data.GetIsolate ());
-  GumFFIFunction * self = data.GetParameter ();
+  HandleScope handle_scope (info.GetIsolate ());
+  GumFFIFunction * self = info.GetParameter ();
   g_hash_table_remove (self->core->native_functions, self);
 }
 
@@ -2476,7 +2726,7 @@ gum_v8_core_on_new_native_callback (const FunctionCallbackInfo<Value> & info)
 
   callback->weak_instance = new GumPersistent<Object>::type (isolate, instance);
   callback->weak_instance->SetWeak (callback,
-      gum_v8_core_on_free_native_callback);
+      gum_v8_core_on_free_native_callback, WeakCallbackType::kParameter);
   callback->weak_instance->MarkIndependent ();
 
   g_hash_table_insert (self->native_callbacks, callback, callback);
@@ -2489,10 +2739,10 @@ error:
 
 static void
 gum_v8_core_on_free_native_callback (
-    const WeakCallbackData<Object, GumFFICallback> & data)
+    const WeakCallbackInfo<GumFFICallback> & info)
 {
-  HandleScope handle_scope (data.GetIsolate ());
-  GumFFICallback * self = data.GetParameter ();
+  HandleScope handle_scope (info.GetIsolate ());
+  GumFFICallback * self = info.GetParameter ();
   g_hash_table_remove (self->core->native_callbacks, self);
 }
 
@@ -3193,7 +3443,8 @@ _gum_v8_native_resource_new (gpointer data,
   resource->instance = new GumPersistent<Object>::type (core->isolate,
       _gum_v8_native_pointer_new (data, core));
   resource->instance->MarkIndependent ();
-  resource->instance->SetWeak (resource, gum_v8_native_resource_on_weak_notify);
+  resource->instance->SetWeak (resource, gum_v8_native_resource_on_weak_notify,
+      WeakCallbackType::kParameter);
   resource->data = data;
   resource->size = size;
   resource->notify = notify;
@@ -3220,10 +3471,10 @@ _gum_v8_native_resource_free (GumV8NativeResource * resource)
 
 static void
 gum_v8_native_resource_on_weak_notify (
-    const WeakCallbackData<Object, GumV8NativeResource> & data)
+    const WeakCallbackInfo<GumV8NativeResource> & info)
 {
-  HandleScope handle_scope (data.GetIsolate ());
-  GumV8NativeResource * self = data.GetParameter ();
+  HandleScope handle_scope (info.GetIsolate ());
+  GumV8NativeResource * self = info.GetParameter ();
   g_hash_table_remove (self->core->native_resources, self);
 }
 
@@ -3741,17 +3992,17 @@ _gum_v8_cpu_context_free_later (GumPersistent<Object>::type * cpu_context,
   wrapper->instance = cpu_context;
   wrapper->cpu_context = copy;
 
-  cpu_context->SetWeak (wrapper, gum_cpu_context_on_weak_notify);
+  cpu_context->SetWeak (wrapper, gum_cpu_context_on_weak_notify,
+      WeakCallbackType::kParameter);
   cpu_context->MarkIndependent ();
 }
 
 static void
-gum_cpu_context_on_weak_notify (const WeakCallbackData<Object,
-                                GumCpuContextWrapper> & data)
+gum_cpu_context_on_weak_notify (
+    const WeakCallbackInfo<GumCpuContextWrapper> & info)
 {
-  GumCpuContextWrapper * wrapper = data.GetParameter ();
+  GumCpuContextWrapper * wrapper = info.GetParameter ();
 
-  wrapper->instance->ClearWeak ();
   delete wrapper->instance;
 
   g_slice_free (GumCpuContext, wrapper->cpu_context);

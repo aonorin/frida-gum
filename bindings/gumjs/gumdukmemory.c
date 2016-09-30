@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Ole André Vadla Ravnås <oleavr@nowsecure.com>
+ * Copyright (C) 2015-2016 Ole André Vadla Ravnås <oleavr@nowsecure.com>
  *
  * Licence: wxWindows Library Licence, Version 3.1
  */
@@ -779,6 +779,7 @@ GUMJS_DEFINE_FUNCTION (gumjs_memory_scan)
     _gum_duk_protect (ctx, sc.on_error);
   _gum_duk_protect (ctx, sc.on_complete);
 
+  _gum_duk_core_pin (core);
   _gum_duk_core_push_job (core,
       (GumScriptJobFunc) gum_memory_scan_context_run,
       g_slice_dup (GumMemoryScanContext, &sc),
@@ -790,19 +791,21 @@ GUMJS_DEFINE_FUNCTION (gumjs_memory_scan)
 static void
 gum_memory_scan_context_free (GumMemoryScanContext * ctx)
 {
+  GumDukCore * core = ctx->core;
   GumDukScope scope;
   duk_context * js_ctx;
 
-  gum_match_pattern_free (ctx->pattern);
-
-  js_ctx = _gum_duk_scope_enter (&scope, ctx->core);
+  js_ctx = _gum_duk_scope_enter (&scope, core);
 
   _gum_duk_unprotect (js_ctx, ctx->on_match);
   if (ctx->on_error != NULL)
     _gum_duk_unprotect (js_ctx, ctx->on_error);
   _gum_duk_unprotect (js_ctx, ctx->on_complete);
 
+  _gum_duk_core_unpin (core);
   _gum_duk_scope_leave (&scope);
+
+  gum_match_pattern_free (ctx->pattern);
 
   g_slice_free (GumMemoryScanContext, ctx);
 }

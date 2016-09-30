@@ -10117,6 +10117,9 @@ struct duk_heap {
 	duk_uint16_t heapptr_deleted16;
 #endif
 
+	duk_global_access_functions *global_access_funcs;
+	duk_global_access_functions global_access_funcs_storage;
+
 	/* Fatal error handling, called e.g. when a longjmp() is needed but
 	 * lj.jmpbuf_ptr is NULL.  fatal_func must never return; it's not
 	 * declared as "noreturn" because doing that for typedefs is a bit
@@ -17582,6 +17585,23 @@ duk_context *duk_create_heap(duk_alloc_function alloc_func,
 	return ctx;
 }
 
+DUK_EXTERNAL void duk_set_global_access_functions(duk_context *ctx, duk_global_access_functions *functions) {
+	duk_hthread *thr = (duk_hthread *) ctx;
+	duk_heap *heap;
+
+	DUK_ASSERT_CTX_VALID(ctx);
+	DUK_ASSERT(thr != NULL);
+	DUK_ASSERT(thr->heap != NULL);
+
+	heap = thr->heap;
+	if (functions != NULL) {
+		heap->global_access_funcs_storage = *functions;
+		heap->global_access_funcs = &heap->global_access_funcs_storage;
+	} else {
+		heap->global_access_funcs = NULL;
+	}
+}
+
 DUK_EXTERNAL void duk_destroy_heap(duk_context *ctx) {
 	duk_hthread *thr = (duk_hthread *) ctx;
 	duk_heap *heap;
@@ -17599,22 +17619,27 @@ DUK_EXTERNAL void duk_suspend(duk_context *ctx, duk_thread_state *state) {
 	duk_hthread *thr = (duk_hthread *) ctx;
 	duk_internal_thread_state *snapshot = (duk_internal_thread_state *) state;
 	duk_heap *heap;
+	duk_ljstate *lj;
 
 	DUK_ASSERT_CTX_VALID(ctx);
 	DUK_ASSERT(thr != NULL);
 	DUK_ASSERT(thr->heap != NULL);
 
 	heap = thr->heap;
+	lj = &heap->lj;
 
-	memcpy(&snapshot->lj, &heap->lj, sizeof(duk_ljstate));
+	duk_push_tval(ctx, &lj->value1);
+	duk_push_tval(ctx, &lj->value2);
+
+	memcpy(&snapshot->lj, lj, sizeof(duk_ljstate));
 	snapshot->handling_error = heap->handling_error;
 	snapshot->curr_thread = heap->curr_thread;
 	snapshot->call_recursion_depth = heap->call_recursion_depth;
 
-	heap->lj.jmpbuf_ptr = NULL;
-	heap->lj.type = DUK_LJ_TYPE_UNKNOWN;
-	DUK_TVAL_SET_UNDEFINED(&heap->lj.value1);
-	DUK_TVAL_SET_UNDEFINED(&heap->lj.value2);
+	lj->jmpbuf_ptr = NULL;
+	lj->type = DUK_LJ_TYPE_UNKNOWN;
+	DUK_TVAL_SET_UNDEFINED(&lj->value1);
+	DUK_TVAL_SET_UNDEFINED(&lj->value2);
 	heap->handling_error = 0;
 	heap->curr_thread = NULL;
 	heap->call_recursion_depth = 0;
@@ -17635,6 +17660,8 @@ DUK_EXTERNAL void duk_resume(duk_context *ctx, const duk_thread_state *state) {
 	heap->handling_error = snapshot->handling_error;
 	heap->curr_thread = snapshot->curr_thread;
 	heap->call_recursion_depth = snapshot->call_recursion_depth;
+
+	duk_pop_2(ctx);
 }
 
 /* XXX: better place for this */
@@ -49056,6 +49083,30 @@ DUK_INTERNAL void duk_hobject_enumerator_create(duk_context *ctx, duk_small_uint
 			/* [enum_target res] */
 		}
 
+		if (curr == thr->builtins[DUK_BIDX_GLOBAL]) {
+			duk_global_access_functions *funcs = thr->heap->global_access_funcs;
+
+			if (funcs != NULL) {
+				if (funcs->enumerate_func(ctx, funcs->udata) == 1) {
+					duk_size_t length, i;
+
+					length = duk_get_length(ctx, -1);
+					for (i = 0; i < length; i++) {
+						duk_get_prop_index(ctx, -1, i);
+						duk_push_true(ctx);
+
+						/* [enum_target res keys key true] */
+						duk_put_prop(ctx, -4);
+
+						/* [enum_target res keys] */
+					}
+
+					duk_pop(ctx);
+					/* [enum_target res] */
+				}
+			}
+		}
+
 		if (enum_flags & DUK_ENUM_OWN_PROPERTIES_ONLY) {
 			break;
 		}
@@ -52471,8 +52522,9 @@ DUK_INTERNAL duk_bool_t duk_hobject_hasprop(duk_hthread *thr, duk_tval *tv_obj, 
 				}
 			}
 
-			duk_pop_2(ctx);  /* [ key trap_result ] -> [] */
-			return tmp_bool;
+			duk_pop(ctx);  /* [ key trap_result ] -> [ key ] */
+			rc = tmp_bool;
+			goto pop_and_return;
 		}
 
 		obj = h_target;  /* resume check from proxy target */
@@ -52485,6 +52537,17 @@ DUK_INTERNAL duk_bool_t duk_hobject_hasprop(duk_hthread *thr, duk_tval *tv_obj, 
 	/* fall through */
 
  pop_and_return:
+	if (!rc && obj == thr->builtins[DUK_BIDX_GLOBAL]) {
+		duk_global_access_functions *funcs = thr->heap->global_access_funcs;
+
+		if (funcs != NULL) {
+			if (funcs->get_func(ctx, (const char *) DUK_HSTRING_GET_DATA(key), funcs->udata) == 1) {
+				duk_pop(ctx);
+				rc = 1;
+			}
+		}
+	}
+
 	duk_pop(ctx);  /* [ key ] -> [] */
 	return rc;
 }
@@ -74654,6 +74717,15 @@ duk_bool_t duk__getvar_helper(duk_hthread *thr,
 
 		return 1;
 	} else {
+		duk_global_access_functions *funcs = thr->heap->global_access_funcs;
+
+		if (funcs != NULL) {
+			if (funcs->get_func(ctx, (const char *) DUK_HSTRING_GET_DATA(name), funcs->udata) == 1) {
+				duk_push_undefined(ctx);
+				return 1;
+			}
+		}
+
 		if (throw_flag) {
 			DUK_ERROR(thr, DUK_ERR_REFERENCE_ERROR,
 			          "identifier '%s' undefined",

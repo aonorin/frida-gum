@@ -157,6 +157,7 @@ TEST_LIST_BEGIN (script)
   SCRIPT_TESTENTRY (unix_fd_can_be_written_to)
 #endif
   SCRIPT_TESTENTRY (basic_hexdump_functionality_is_available)
+  SCRIPT_TESTENTRY (hexdump_supports_native_pointer_conforming_object)
   SCRIPT_TESTENTRY (native_pointer_provides_is_null)
   SCRIPT_TESTENTRY (native_pointer_provides_arithmetic_operations)
   SCRIPT_TESTENTRY (native_pointer_to_match_pattern)
@@ -185,6 +186,7 @@ TEST_LIST_BEGIN (script)
   SCRIPT_TESTENTRY (weak_callback_is_triggered_on_gc)
   SCRIPT_TESTENTRY (weak_callback_is_triggered_on_unload)
   SCRIPT_TESTENTRY (weak_callback_is_triggered_on_unbind)
+  SCRIPT_TESTENTRY (globals_can_be_dynamically_generated)
   SCRIPT_TESTENTRY (exceptions_can_be_handled)
   SCRIPT_TESTENTRY (debugger_can_be_enabled)
 TEST_LIST_END ()
@@ -257,9 +259,12 @@ SCRIPT_TESTCASE (instruction_can_be_parsed)
   EXPECT_SEND_MESSAGE_WITH ("true");
   EXPECT_NO_MESSAGES ();
 
-  COMPILE_AND_LOAD_SCRIPT ("Instruction.parse(ptr(\"0x1\"));");
-  EXPECT_ERROR_MESSAGE_WITH (ANY_LINE_NUMBER,
-      "Error: access violation accessing 0x1");
+  if (!RUNNING_ON_VALGRIND)
+  {
+    COMPILE_AND_LOAD_SCRIPT ("Instruction.parse(ptr(\"0x1\"));");
+    EXPECT_ERROR_MESSAGE_WITH (ANY_LINE_NUMBER,
+        "Error: access violation accessing 0x1");
+  }
 }
 
 SCRIPT_TESTCASE (address_can_be_resolved_to_symbol)
@@ -415,6 +420,12 @@ SCRIPT_TESTCASE (native_function_can_be_invoked)
 
 SCRIPT_TESTCASE (native_function_crash_results_in_exception)
 {
+  if (RUNNING_ON_VALGRIND)
+  {
+    g_print ("<skipping, not compatible with Valgrind> ");
+    return;
+  }
+
   COMPILE_AND_LOAD_SCRIPT (
       "var targetWithString = new NativeFunction(" GUM_PTR_CONST ", "
           "'pointer', ['pointer']);"
@@ -429,6 +440,12 @@ SCRIPT_TESTCASE (native_function_crash_results_in_exception)
 
 SCRIPT_TESTCASE (nested_native_function_crash_is_handled_gracefully)
 {
+  if (RUNNING_ON_VALGRIND)
+  {
+    g_print ("<skipping, not compatible with Valgrind> ");
+    return;
+  }
+
   COMPILE_AND_LOAD_SCRIPT (
       "var targetWithCallback = new NativeFunction(" GUM_PTR_CONST ", "
           "'pointer', ['int', 'pointer', 'pointer']);"
@@ -679,6 +696,18 @@ SCRIPT_TESTCASE (basic_hexdump_functionality_is_available)
           "Hello hex world!\\n"
       "00000010  20 77 30 30 74 00                                "
           " w00t.\"");
+}
+
+SCRIPT_TESTCASE (hexdump_supports_native_pointer_conforming_object)
+{
+  COMPILE_AND_LOAD_SCRIPT (
+      "var obj = { handle: Memory.allocUtf8String(\"Hello hex world!\") };"
+      "send(hexdump(obj, { length: 16 }));");
+  EXPECT_SEND_MESSAGE_WITH ("\""
+      "           0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F  "
+          "0123456789ABCDEF\\n"
+      "00000000  48 65 6c 6c 6f 20 68 65 78 20 77 6f 72 6c 64 21  "
+          "Hello hex world!\"");
 }
 
 SCRIPT_TESTCASE (native_pointer_provides_is_null)
@@ -1146,6 +1175,12 @@ SCRIPT_TESTCASE (process_current_thread_id_is_available)
 
 SCRIPT_TESTCASE (process_threads_can_be_enumerated)
 {
+  if (RUNNING_ON_VALGRIND)
+  {
+    g_print ("<skipping, not compatible with Valgrind> ");
+    return;
+  }
+
   COMPILE_AND_LOAD_SCRIPT (
       "Process.enumerateThreads({"
         "onMatch: function (thread) {"
@@ -1164,6 +1199,12 @@ SCRIPT_TESTCASE (process_threads_can_be_enumerated_synchronously)
 {
   gboolean done = FALSE;
   GThread * thread_a, * thread_b;
+
+  if (RUNNING_ON_VALGRIND)
+  {
+    g_print ("<skipping, not compatible with Valgrind> ");
+    return;
+  }
 
   thread_a = g_thread_new ("script-test-sleeping-dummy-a", sleeping_dummy,
       &done);
@@ -2048,6 +2089,12 @@ SCRIPT_TESTCASE (invocations_provide_call_depth)
 
 SCRIPT_TESTCASE (invocations_provide_context_for_backtrace)
 {
+  if (RUNNING_ON_VALGRIND)
+  {
+    g_print ("<skipping, not compatible with Valgrind> ");
+    return;
+  }
+
   COMPILE_AND_LOAD_SCRIPT (
       "var mode = '%s';"
       "Interceptor.attach(" GUM_PTR_CONST ", {"
@@ -2272,6 +2319,12 @@ SCRIPT_TESTCASE (instructions_can_be_probed)
 
 SCRIPT_TESTCASE (interceptor_handles_invalid_arguments)
 {
+  if (RUNNING_ON_VALGRIND)
+  {
+    g_print ("<skipping, not compatible with Valgrind> ");
+    return;
+  }
+
   COMPILE_AND_LOAD_SCRIPT (
       "Interceptor.attach(ptr(\"0x1\"), {"
       "  onEnter: function (args) {"
@@ -2443,6 +2496,12 @@ SCRIPT_TESTCASE (memory_scan_should_be_interruptible)
 
 SCRIPT_TESTCASE (memory_scan_handles_unreadable_memory)
 {
+  if (RUNNING_ON_VALGRIND)
+  {
+    g_print ("<skipping, not compatible with Valgrind> ");
+    return;
+  }
+
   COMPILE_AND_LOAD_SCRIPT (
       "Memory.scan(ptr(\"1328\"), 7, '13 37', {"
         "onMatch: function (address, size) {"
@@ -2581,9 +2640,12 @@ SCRIPT_TESTCASE (memory_can_be_copied)
   g_assert_cmphex (to[3], ==, 'H');
   g_assert_cmphex (to[4], ==, 'e');
 
-  COMPILE_AND_LOAD_SCRIPT (
-      "Memory.copy(" GUM_PTR_CONST ", ptr(\"1337\"), 1);", to);
-  EXPECT_ERROR_MESSAGE_WITH (1, "Error: access violation accessing 0x539");
+  if (!RUNNING_ON_VALGRIND)
+  {
+    COMPILE_AND_LOAD_SCRIPT (
+        "Memory.copy(" GUM_PTR_CONST ", ptr(\"1337\"), 1);", to);
+    EXPECT_ERROR_MESSAGE_WITH (1, "Error: access violation accessing 0x539");
+  }
 }
 
 SCRIPT_TESTCASE (memory_can_be_duped)
@@ -3162,6 +3224,12 @@ SCRIPT_TESTCASE (invalid_read_results_in_exception)
   };
   guint i;
 
+  if (RUNNING_ON_VALGRIND)
+  {
+    g_print ("<skipping, not compatible with Valgrind> ");
+    return;
+  }
+
   for (i = 0; i != G_N_ELEMENTS (type_name); i++)
   {
     gchar * source;
@@ -3195,6 +3263,12 @@ SCRIPT_TESTCASE (invalid_write_results_in_exception)
       "Utf16String"
   };
   guint i;
+
+  if (RUNNING_ON_VALGRIND)
+  {
+    g_print ("<skipping, not compatible with Valgrind> ");
+    return;
+  }
 
   for (i = 0; i != G_N_ELEMENTS (primitive_type_name); i++)
   {
@@ -3401,7 +3475,7 @@ SCRIPT_TESTCASE (source_maps_should_be_supported)
   {
     g_assert (strstr (item->message,
         "\"payload\":\"Error: Not yet implemented\\n"
-        "    at Object.module.exports.add (math.js:5:1)\\n"
+        "    at Object.add (math.js:5:1)\\n"
         "    at Object.1../math (index.js:6:1)\\n"
         "    at s (node_modules/frida/node_modules/browserify/node_modules/"
             "browser-pack/_prelude.js:1:1)\\n"
@@ -3514,6 +3588,61 @@ SCRIPT_TESTCASE (weak_callback_is_triggered_on_unbind)
       "});"
       "WeakRef.unbind(id);");
   EXPECT_SEND_MESSAGE_WITH ("\"weak notify\"");
+}
+
+SCRIPT_TESTCASE (globals_can_be_dynamically_generated)
+{
+  COMPILE_AND_LOAD_SCRIPT (
+      "var lengthBefore = Object.getOwnPropertyNames(global).length;"
+      "Script.setGlobalAccessHandler({"
+      "  get: function (property) {"
+      "    if (property === 'badger')"
+      "      return 1337;"
+      "  },"
+      "  enumerate: function () {"
+      "    return ['badger'];"
+      "  },"
+      "});"
+      "var lengthAfter = Object.getOwnPropertyNames(global).length;"
+      "send('badger' in global);"
+      "send(badger);"
+      "send(typeof badger);"
+      "send(lengthAfter === lengthBefore + 1);"
+      "send(snake);");
+  EXPECT_SEND_MESSAGE_WITH ("true");
+  EXPECT_SEND_MESSAGE_WITH ("1337");
+  EXPECT_SEND_MESSAGE_WITH ("\"number\"");
+  EXPECT_SEND_MESSAGE_WITH ("true");
+  if (GUM_DUK_IS_SCRIPT_BACKEND (fixture->backend))
+  {
+    EXPECT_ERROR_MESSAGE_WITH (ANY_LINE_NUMBER,
+        "ReferenceError: identifier 'snake' undefined");
+  }
+  else
+  {
+    EXPECT_ERROR_MESSAGE_WITH (ANY_LINE_NUMBER,
+        "ReferenceError: snake is not defined");
+  }
+  EXPECT_NO_MESSAGES ();
+
+  COMPILE_AND_LOAD_SCRIPT (
+      "var totalGetCalls = 0;"
+      "Script.setGlobalAccessHandler({"
+      "  get: function (property) {"
+      "    totalGetCalls++;"
+      "  },"
+      "  enumerate: function () {"
+      "    return [];"
+      "  },"
+      "});"
+      "(1, eval)('mushroom = 42;');"
+      "send(totalGetCalls);"
+      "send(mushroom);"
+      "send(totalGetCalls);");
+  EXPECT_SEND_MESSAGE_WITH ("0");
+  EXPECT_SEND_MESSAGE_WITH ("42");
+  EXPECT_SEND_MESSAGE_WITH ("0");
+  EXPECT_NO_MESSAGES ();
 }
 
 SCRIPT_TESTCASE (exceptions_can_be_handled)
