@@ -26,25 +26,49 @@ ScriptScope::ScriptScope (GumV8Script * parent)
 
 ScriptScope::~ScriptScope ()
 {
-  GumV8ScriptPrivate * priv = parent->priv;
-  GumV8Core * core = &priv->core;
+  auto priv = parent->priv;
+  auto core = &priv->core;
 
   if (trycatch.HasCaught ())
   {
-    Handle<Value> exception = trycatch.Exception ();
+    auto exception = trycatch.Exception ();
     trycatch.Reset ();
     _gum_v8_core_on_unhandled_exception (&priv->core, exception);
     trycatch.Reset ();
   }
 
+  if (!g_queue_is_empty (core->tick_callbacks))
+  {
+    auto isolate = parent->priv->isolate;
+
+    GumPersistent<Function>::type * tick_callback;
+    auto receiver = Undefined (isolate);
+    while ((tick_callback = (GumPersistent<Function>::type *)
+        g_queue_pop_head (core->tick_callbacks)) != nullptr)
+    {
+      auto callback = Local<Function>::New (isolate, *tick_callback);
+
+      callback->Call (receiver, 0, nullptr);
+      if (trycatch.HasCaught ())
+      {
+        auto exception = trycatch.Exception ();
+        trycatch.Reset ();
+        _gum_v8_core_on_unhandled_exception (&priv->core, exception);
+        trycatch.Reset ();
+      }
+
+      delete tick_callback;
+    }
+  }
+
   _gum_v8_core_unpin (core);
 
-  GumV8FlushNotify pending_flush_notify = core->flush_notify;
+  auto pending_flush_notify = core->flush_notify;
   if (pending_flush_notify != NULL && core->usage_count == 0)
   {
     core->flush_notify = NULL;
 
-    Isolate * isolate = parent->priv->isolate;
+    auto isolate = parent->priv->isolate;
     isolate->Exit ();
     {
       Unlocker ul (isolate);

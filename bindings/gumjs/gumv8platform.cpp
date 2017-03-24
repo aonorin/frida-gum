@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Ole André Vadla Ravnås <ole.andre.ravnas@tillitech.com>
+ * Copyright (C) 2015-2017 Ole André Vadla Ravnås <oleavr@nowsecure.com>
  *
  * Licence: wxWindows Library Licence, Version 3.1
  */
@@ -7,9 +7,157 @@
 #include "gumv8platform.h"
 
 #include "gumv8script-debug.h"
+#include "gumv8script-java.h"
+#include "gumv8script-objc.h"
 #include "gumv8script-runtime.h"
 
 using namespace v8;
+
+class GumV8DisposeRequest
+{
+public:
+  GumV8DisposeRequest (GumV8Platform * platform)
+    : platform (platform),
+      completed (false)
+  {
+    g_cond_init (&cond);
+  }
+
+  ~GumV8DisposeRequest ()
+  {
+    g_cond_clear (&cond);
+  }
+
+  void Await ()
+  {
+    g_mutex_lock (&platform->lock);
+    while (!completed)
+      g_cond_wait (&cond, &platform->lock);
+    g_mutex_unlock (&platform->lock);
+  }
+
+  void Complete ()
+  {
+    g_mutex_lock (&platform->lock);
+    completed = true;
+    g_cond_signal (&cond);
+    g_mutex_unlock (&platform->lock);
+  }
+
+private:
+  GumV8Platform * platform;
+  GCond cond;
+  bool completed;
+
+  friend class GumV8Platform;
+};
+
+class GumV8TaskRequest
+{
+public:
+  GumV8TaskRequest (GumV8Platform * platform,
+                    Isolate * isolate)
+    : platform(platform),
+      isolate(isolate)
+  {
+  }
+
+  virtual ~GumV8TaskRequest ()
+  {
+  }
+
+  void ClearIsolate ()
+  {
+    isolate = nullptr;
+  }
+
+  virtual void Perform () = 0;
+
+protected:
+  GumV8Platform * platform;
+  Isolate * isolate;
+
+  friend class GumV8Platform;
+};
+
+class GumV8PlainTaskRequest : public GumV8TaskRequest
+{
+public:
+  GumV8PlainTaskRequest (GumV8Platform * platform,
+                         Isolate * isolate,
+                         Task * task)
+    : GumV8TaskRequest (platform, isolate),
+      task (task)
+  {
+  }
+
+  ~GumV8PlainTaskRequest ()
+  {
+    delete task;
+  }
+
+  void Perform ()
+  {
+    if (isolate != nullptr)
+    {
+      Locker locker (isolate);
+      Isolate::Scope isolate_scope (isolate);
+      HandleScope handle_scope (isolate);
+
+      task->Run ();
+    }
+    else
+    {
+      task->Run ();
+    }
+  }
+
+private:
+  Task * task;
+};
+
+class GumV8IdleTaskRequest : public GumV8TaskRequest
+{
+public:
+  GumV8IdleTaskRequest (GumV8Platform * platform,
+                        Isolate * isolate,
+                        IdleTask * task)
+    : GumV8TaskRequest (platform, isolate),
+      task (task)
+  {
+  }
+
+  ~GumV8IdleTaskRequest ()
+  {
+    delete task;
+  }
+
+  void Perform ()
+  {
+    if (isolate != nullptr)
+    {
+      Locker locker (isolate);
+      Isolate::Scope isolate_scope (isolate);
+      HandleScope handle_scope (isolate);
+
+      RunTask ();
+    }
+    else
+    {
+      RunTask ();
+    }
+  }
+
+private:
+  void RunTask ()
+  {
+    const double deadline_in_seconds =
+        platform->MonotonicallyIncreasingTime () + (1.0 / 60.0);
+    task->Run (deadline_in_seconds);
+  }
+
+  IdleTask * task;
+};
 
 class GumArrayBufferAllocator : public ArrayBuffer::Allocator
 {
@@ -35,35 +183,16 @@ public:
   }
 };
 
-template<class T>
-class GumV8TaskRequest
-{
-public:
-  GumV8TaskRequest (Platform * platform,
-                    Isolate * isolate,
-                    T * task)
-    : platform(platform),
-      isolate(isolate),
-      task(task)
-  {
-  }
-
-  ~GumV8TaskRequest ()
-  {
-    delete task;
-  }
-
-  Platform * platform;
-  Isolate * isolate;
-  T * task;
-};
-
 GumV8Platform::GumV8Platform ()
-  : disposing (false),
+  : objc_bundle (NULL),
+    java_bundle (NULL),
     scheduler (gum_script_scheduler_new ()),
     start_time (g_get_monotonic_time ()),
-    array_buffer_allocator (new GumArrayBufferAllocator ())
+    array_buffer_allocator (new GumArrayBufferAllocator ()),
+    pending_foreground_tasks (g_hash_table_new (NULL, NULL))
 {
+  g_mutex_init (&lock);
+
   V8::InitializePlatform (this);
   V8::Initialize ();
 
@@ -76,6 +205,22 @@ GumV8Platform::GumV8Platform ()
   InitRuntime ();
 }
 
+GumV8Platform::~GumV8Platform ()
+{
+  GumV8DisposeRequest request (this);
+  gum_script_scheduler_push_job_on_js_thread (scheduler, G_PRIORITY_HIGH,
+      (GumScriptJobFunc) PerformDispose, &request, NULL);
+  request.Await ();
+
+  g_hash_table_unref (pending_foreground_tasks);
+
+  g_object_unref (scheduler);
+
+  delete array_buffer_allocator;
+
+  g_mutex_clear (&lock);
+}
+
 void
 GumV8Platform::InitRuntime ()
 {
@@ -85,8 +230,62 @@ GumV8Platform::InitRuntime ()
   Local<Context> context (Context::New (isolate));
   Context::Scope context_scope (context);
 
-  user_runtime = gum_v8_bundle_new (isolate, gum_v8_script_runtime_sources);
-  debug_runtime = gum_v8_bundle_new (isolate, gum_v8_script_debug_sources);
+  runtime_bundle = gum_v8_bundle_new (isolate, gumjs_runtime_modules);
+  debug_bundle = gum_v8_bundle_new (isolate, gumjs_debug_modules);
+}
+
+void
+GumV8Platform::PerformDispose (GumV8DisposeRequest * dispose_request)
+{
+  dispose_request->platform->Dispose (dispose_request);
+}
+
+void
+GumV8Platform::Dispose (GumV8DisposeRequest * dispose_request)
+{
+  {
+    Locker locker (isolate);
+    Isolate::Scope isolate_scope (isolate);
+    HandleScope handle_scope (isolate);
+
+    g_clear_pointer (&objc_bundle, gum_v8_bundle_free);
+    g_clear_pointer (&java_bundle, gum_v8_bundle_free);
+
+    g_clear_pointer (&debug_bundle, gum_v8_bundle_free);
+    g_clear_pointer (&runtime_bundle, gum_v8_bundle_free);
+  }
+
+  isolate->Dispose ();
+
+  g_mutex_lock (&lock);
+
+  while (g_hash_table_size (pending_foreground_tasks) > 0)
+  {
+    GHashTableIter iter;
+    GumV8TaskRequest * request;
+    GSource * source;
+
+    g_hash_table_iter_init (&iter, pending_foreground_tasks);
+    g_hash_table_iter_next (&iter, (gpointer *) &request, (gpointer *) &source);
+    g_hash_table_iter_remove (&iter);
+
+    g_mutex_unlock (&lock);
+
+    g_source_destroy (source);
+
+    request->ClearIsolate ();
+    request->Perform ();
+    delete request;
+
+    g_mutex_lock (&lock);
+  }
+
+  g_mutex_unlock (&lock);
+
+  V8::Dispose ();
+  V8::ShutdownPlatform ();
+
+  dispose_request->Complete ();
 }
 
 void
@@ -96,27 +295,38 @@ GumV8Platform::OnFatalError (const char * location,
   g_log ("V8", G_LOG_LEVEL_ERROR, "%s: %s", location, message);
 }
 
-GumV8Platform::~GumV8Platform ()
+const gchar *
+GumV8Platform::GetRuntimeSourceMap () const
 {
-  disposing = true;
+  return gumjs_frida_source_map;
+}
 
-  {
-    Locker locker (isolate);
-    Isolate::Scope isolate_scope (isolate);
-    HandleScope handle_scope (isolate);
+GumV8Bundle *
+GumV8Platform::GetObjCBundle ()
+{
+  if (objc_bundle == NULL)
+    objc_bundle = gum_v8_bundle_new (isolate, gumjs_objc_modules);
+  return objc_bundle;
+}
 
-    gum_v8_bundle_free (debug_runtime);
-    gum_v8_bundle_free (user_runtime);
-  }
+const gchar *
+GumV8Platform::GetObjCSourceMap () const
+{
+  return gumjs_objc_source_map;
+}
 
-  isolate->Dispose ();
+GumV8Bundle *
+GumV8Platform::GetJavaBundle ()
+{
+  if (java_bundle == NULL)
+    java_bundle = gum_v8_bundle_new (isolate, gumjs_java_modules);
+  return java_bundle;
+}
 
-  V8::Dispose ();
-  V8::ShutdownPlatform ();
-
-  g_object_unref (scheduler);
-
-  delete array_buffer_allocator;
+const gchar *
+GumV8Platform::GetJavaSourceMap () const
+{
+  return gumjs_java_source_map;
 }
 
 size_t
@@ -131,32 +341,21 @@ GumV8Platform::CallOnBackgroundThread (Task * task,
 {
   (void) expected_runtime;
 
-  if (disposing)
-  {
-    /* This happens during V8::Dispose() */
-    task->Run ();
-    delete task;
-    return;
-  }
-
-  GumV8TaskRequest<Task> * request =
-      new GumV8TaskRequest<Task> (this, nullptr, task);
+  auto request = new GumV8PlainTaskRequest (this, nullptr, task);
 
   gum_script_scheduler_push_job_on_thread_pool (scheduler,
-      (GumScriptJobFunc) HandleTaskRequest, request, NULL);
+      (GumScriptJobFunc) HandleBackgroundTaskRequest, request, NULL);
 }
 
 void
 GumV8Platform::CallOnForegroundThread (Isolate * for_isolate,
                                        Task * task)
 {
-  g_assert (!disposing);
+  auto request = new GumV8PlainTaskRequest (this, for_isolate, task);
 
-  GumV8TaskRequest<Task> * request =
-      new GumV8TaskRequest<Task> (this, for_isolate, task);
-
-  gum_script_scheduler_push_job_on_js_thread (scheduler, G_PRIORITY_DEFAULT,
-      (GumScriptJobFunc) HandleTaskRequest, request, NULL);
+  auto source = g_idle_source_new ();
+  g_source_set_priority (source, G_PRIORITY_DEFAULT);
+  ScheduleForegroundTask (request, source);
 }
 
 void
@@ -164,30 +363,22 @@ GumV8Platform::CallDelayedOnForegroundThread (Isolate * for_isolate,
                                               Task * task,
                                               double delay_in_seconds)
 {
-  g_assert (!disposing);
+  auto request = new GumV8PlainTaskRequest (this, for_isolate, task);
 
-  GumV8TaskRequest<Task> * request =
-      new GumV8TaskRequest<Task> (this, for_isolate, task);
-
-  GSource * source = g_timeout_source_new (delay_in_seconds * 1000.0);
-  g_source_set_priority (source, G_PRIORITY_DEFAULT);
-  g_source_set_callback (source, (GSourceFunc) HandleDelayedTaskRequest,
-      request, NULL);
-  g_source_attach (source, gum_script_scheduler_get_js_context (scheduler));
-  g_source_unref (source);
+  auto source = g_timeout_source_new (delay_in_seconds * 1000.0);
+  g_source_set_priority (source, G_PRIORITY_LOW);
+  ScheduleForegroundTask (request, source);
 }
 
 void
 GumV8Platform::CallIdleOnForegroundThread (Isolate * for_isolate,
                                            IdleTask * task)
 {
-  g_assert (!disposing);
+  auto request = new GumV8IdleTaskRequest (this, for_isolate, task);
 
-  GumV8TaskRequest<IdleTask> * request =
-      new GumV8TaskRequest<IdleTask> (this, for_isolate, task);
-
-  gum_script_scheduler_push_job_on_js_thread (scheduler, G_PRIORITY_DEFAULT,
-      (GumScriptJobFunc) HandleIdleTaskRequest, request, NULL);
+  auto source = g_idle_source_new ();
+  g_source_set_priority (source, G_PRIORITY_LOW);
+  ScheduleForegroundTask (request, source);
 }
 
 bool
@@ -202,52 +393,48 @@ double
 GumV8Platform::MonotonicallyIncreasingTime ()
 {
   gint64 delta = g_get_monotonic_time () - start_time;
+
   return ((double) (delta / G_GINT64_CONSTANT (1000))) / 1000.0;
 }
 
 void
-GumV8Platform::HandleTaskRequest (GumV8TaskRequest<Task> * request)
+GumV8Platform::HandleBackgroundTaskRequest (GumV8TaskRequest * request)
 {
-  Isolate * isolate = request->isolate;
-
-  if (isolate != nullptr)
-  {
-    Locker locker (isolate);
-    Isolate::Scope isolate_scope (isolate);
-    HandleScope handle_scope (isolate);
-
-    request->task->Run ();
-
-    delete request;
-  }
-  else
-  {
-    request->task->Run ();
-
-    delete request;
-  }
+  request->Perform ();
+  delete request;
 }
 
 gboolean
-GumV8Platform::HandleDelayedTaskRequest (GumV8TaskRequest<Task> * request)
+GumV8Platform::HandleForegroundTaskRequest (GumV8TaskRequest * request)
 {
-  HandleTaskRequest (request);
+  request->Perform ();
+
+  request->platform->OnForegroundTaskPerformed (request);
+
+  delete request;
 
   return FALSE;
 }
 
 void
-GumV8Platform::HandleIdleTaskRequest (GumV8TaskRequest<IdleTask> * request)
+GumV8Platform::ScheduleForegroundTask (GumV8TaskRequest * request,
+                                       GSource * source)
 {
-  Isolate * isolate = request->isolate;
+  g_source_set_callback (source, (GSourceFunc) HandleForegroundTaskRequest,
+      request, NULL);
 
-  Locker locker (isolate);
-  Isolate::Scope isolate_scope (isolate);
-  HandleScope handle_scope (isolate);
+  g_mutex_lock (&lock);
+  g_hash_table_insert (pending_foreground_tasks, request, source);
+  g_source_attach (source, gum_script_scheduler_get_js_context (scheduler));
+  g_mutex_unlock (&lock);
 
-  const double deadline_in_seconds =
-      request->platform->MonotonicallyIncreasingTime () + (1.0 / 60.0);
-  request->task->Run (deadline_in_seconds);
+  g_source_unref (source);
+}
 
-  delete request;
+void
+GumV8Platform::OnForegroundTaskPerformed (GumV8TaskRequest * request)
+{
+  g_mutex_lock (&lock);
+  g_hash_table_remove (pending_foreground_tasks, request);
+  g_mutex_unlock (&lock);
 }

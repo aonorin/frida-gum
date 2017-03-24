@@ -13,6 +13,7 @@ m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 AM_MAINTAINER_MODE
 
 AC_PROG_CC
+AC_USE_SYSTEM_EXTENSIONS
 AC_PROG_CC_STDC
 AC_PROG_CXX
 AC_PROG_OBJC
@@ -26,6 +27,7 @@ AC_TYPE_LONG_DOUBLE
 AC_TYPE_LONG_LONG_INT
 
 AC_CHECK_HEADERS([elf.h sys/elf.h sys/user.h])
+AC_CHECK_FUNC([log2], [AC_DEFINE([HAVE_LOG2], [1], [Define if log2() exists.])])
 
 HAVE_I386=no
 HAVE_ARM=no
@@ -69,7 +71,6 @@ case $host_os in
 esac
 if [[ "x$HAVE_LINUX" = "xyes" ]]; then
   AC_DEFINE(HAVE_LINUX, 1, [Define to 1 if OS is Linux based.])
-  AC_DEFINE(_GNU_SOURCE, 1, [Enable GNU extensions (required by Linux backend).])
 fi
 if [[ "x$HAVE_DARWIN" = "xyes" ]]; then
   AC_DEFINE(HAVE_DARWIN, 1, [Define to 1 if OS is Darwin based.])
@@ -195,8 +196,16 @@ GLIB_VERSION=2.46.0
 CAPSTONE_VERSION=3.0.4
 pkg_modules="glib-2.0 >= $GLIB_VERSION, gobject-2.0 >= $GLIB_VERSION,
     gio-2.0 >= $GLIB_VERSION, gio-unix-2.0 >= $GLIB_VERSION,
-    capstone >= $CAPSTONE_VERSION"
+    capstone >= $CAPSTONE_VERSION,
+    libffi >= 3.1.1"
 PKG_CHECK_MODULES(GUM, [$pkg_modules])
+
+if [[ "x$HAVE_ANDROID" = "xyes" ]]; then
+  GUM_LIBS_PRIVATE="-llog"
+fi
+AC_SUBST(GUM_LIBS_PRIVATE)
+
+GUM_LIBS="$GUM_LIBS $GUM_LIBS_PRIVATE"
 
 PKG_CHECK_MODULES(LIBUNWIND, [libunwind], [HAVE_LIBUNWIND=yes], [HAVE_LIBUNWIND=no])
 if [[ "x$HAVE_LIBUNWIND" = "xyes" ]]; then
@@ -250,13 +259,11 @@ AC_ARG_ENABLE(gumjs,
   [AS_HELP_STRING([--enable-gumjs],
                   [enable JavaScript bindings [default=yes]])],,
   [enable_gumjs=yes])
-LIBFFI_REQUIRES="libffi >= 3.1.1"
 V8_REQUIRES=""
 if [[ "x$enable_gumjs" = "xyes" ]]; then
   AC_DEFINE(HAVE_GUMJS, 1, [Define to 1 if GumJS is available.])
 
   PKG_CHECK_MODULES(JSON_GLIB, [json-glib-1.0])
-  PKG_CHECK_MODULES(LIBFFI, [$LIBFFI_REQUIRES])
 
   if [[ "x$enable_diet" = "xno" ]]; then
     PKG_CHECK_MODULES(V8, [v8], [HAVE_V8=yes], [HAVE_V8=no])
@@ -265,22 +272,24 @@ if [[ "x$enable_gumjs" = "xyes" ]]; then
   fi
   if [[ "x$HAVE_V8" = "xyes" ]]; then
     AC_DEFINE(HAVE_V8, 1, [Define to 1 if V8 is available.])
-    V8_REQUIRES="v8"
+    V8_REQUIRES="v8 >= 5.8.60"
   fi
   AM_CONDITIONAL(HAVE_V8, [test "x$HAVE_V8" = "xyes"])
 
-  GUMJS_CFLAGS="$GUM_CFLAGS $JSON_GLIB_CFLAGS $LIBFFI_CFLAGS $V8_CFLAGS"
-  GUMJS_LDFLAGS="$GUM_LDFLAGS $JSON_GLIB_LDFLAGS $LIBFFI_LDFLAGS $V8_LDFLAGS"
-  GUMJS_LIBS="$GUM_LIBS $JSON_GLIB_LIBS $LIBFFI_LIBS $V8_LIBS"
+  GUMJS_CFLAGS="$GUM_CFLAGS $JSON_GLIB_CFLAGS $V8_CFLAGS"
+  GUMJS_LDFLAGS="$GUM_LDFLAGS $JSON_GLIB_LDFLAGS $V8_LDFLAGS"
+  GUMJS_LIBS="$GUM_LIBS $JSON_GLIB_LIBS $V8_LIBS"
 fi
 AM_CONDITIONAL(ENABLE_GUMJS, [test "x$enable_gumjs" = "xyes"])
 AC_SUBST(GUMJS_CFLAGS)
 AC_SUBST(GUMJS_LDFLAGS)
 AC_SUBST(GUMJS_LIBS)
-AC_SUBST(LIBFFI_REQUIRES)
 AC_SUBST(V8_REQUIRES)
 
 if [[ "x$HAVE_LINUX" = "xyes" ]]; then
+  GUMDUK_LIBS_PRIVATE="-lm"
+fi
+if [[ "x$HAVE_QNX" = "xyes" ]]; then
   GUMDUK_LIBS_PRIVATE="-lm"
 fi
 AC_SUBST(GUMDUK_LIBS_PRIVATE)

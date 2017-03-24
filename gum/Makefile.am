@@ -8,12 +8,13 @@ fridainclude_HEADERS = \
 	gum.h \
 	gumapiresolver.h \
 	gumbacktracer.h \
+	gumcloak.h \
 	gumcodeallocator.h \
 	gumcodesegment.h \
 	gumdefs.h \
-	gumexceptor.h \
 	gumevent.h \
 	gumeventsink.h \
+	gumexceptor.h \
 	gumfunction.h \
 	guminterceptor.h \
 	guminvocationcontext.h \
@@ -115,7 +116,8 @@ arch_sources += \
 backend_sources += \
 	backend-arm64/guminterceptor-arm64.c \
 	backend-arm64/gumspinlock-arm64.c \
-	backend-arm64/gumstalker-arm64.c
+	backend-arm64/gumstalker-arm64.c \
+	backend-arm64/gumstalker-arm64-glue.S
 endif
 
 if ARCH_MIPS
@@ -153,14 +155,17 @@ backend_sources += \
 	backend-darwin/gummemory-darwin.c \
 	backend-darwin/gumprocess-darwin.c \
 	backend-darwin/gumcodesegment-darwin.c \
+	backend-darwin/gumexceptor-darwin.c \
 	backend-darwin/gumdarwinmapper.c \
-	backend-darwin/gumdarwinmodule.c
+	backend-darwin/gumdarwinmodule.c \
+	backend-darwin/gumdarwinmoduleresolver.c
 fridainclude_HEADERS += \
 	backend-darwin/gumdarwin.h \
 	backend-darwin/gumdarwinbacktracer.h \
 	backend-darwin/gumdarwinmapper.h \
-	backend-darwin/gumdarwinmodule.h
-else 
+	backend-darwin/gumdarwinmodule.h \
+	backend-darwin/gumdarwinmoduleresolver.h
+else
 if OS_QNX
 backend_sources += \
 	backend-qnx/gumprocess-qnx.c \
@@ -174,6 +179,8 @@ backend_sources += \
 	backend-posix/gumtls-posix.c \
 	backend-posix/gummemory-posix.c
 endif
+backend_sources += \
+	backend-posix/gumexceptor-posix.c
 endif
 
 if HAVE_LIBUNWIND
@@ -193,9 +200,12 @@ libfrida_gum_la_SOURCES = \
 	gum-init.h \
 	gumapiresolver.c \
 	gumbacktracer.c \
+	gumcloak.c \
+	gumcloak-priv.h \
 	gumcodeallocator.c \
 	gumcodesegment.c \
 	gumexceptor.c \
+	gumexceptorbackend.h \
 	gumeventsink.c \
 	guminterceptor.c \
 	guminvocationcontext.c \
@@ -207,6 +217,8 @@ libfrida_gum_la_SOURCES = \
 	gumlibc.h \
 	gummemory.c \
 	gummemorymap.c \
+	gummetalarray.c \
+	gummetalarray.h \
 	gummetalhash.c \
 	gummetalhash.h \
 	gummoduleapiresolver.c \
@@ -214,6 +226,7 @@ libfrida_gum_la_SOURCES = \
 	gumprintf.c \
 	gumprintf.h \
 	gumprocess.c \
+	gumprocess-priv.h \
 	gumreturnaddress.c \
 	arch-x86/gumx86writer.c \
 	arch-x86/gumx86relocator.c \

@@ -1,6 +1,8 @@
 namespace Gum {
 	[CCode (cheader_filename = "gumjs/gumscriptbackend.h")]
 	public interface ScriptBackend : GLib.Object {
+		public delegate void DebugMessageHandler (string message);
+
 		public static unowned ScriptBackend obtain ();
 		public static unowned ScriptBackend obtain_v8 ();
 		public static unowned ScriptBackend obtain_duk ();
@@ -13,19 +15,13 @@ namespace Gum {
 		public async GLib.Bytes compile (string source, GLib.Cancellable? cancellable = null) throws GLib.IOError;
 		public GLib.Bytes compile_sync (string source, GLib.Cancellable? cancellable = null) throws GLib.IOError;
 
-		public void set_debug_message_handler (owned Gum.Script.DebugMessageHandler? handler);
+		public void set_debug_message_handler (owned Gum.ScriptBackend.DebugMessageHandler? handler);
 		public void post_debug_message (string message);
-
-		public static void ignore (Gum.ThreadId thread_id);
-		public static void unignore (Gum.ThreadId thread_id);
-		public static void unignore_later (Gum.ThreadId thread_id);
-		public static bool is_ignoring (Gum.ThreadId thread_id);
 	}
 
 	[CCode (cheader_filename = "gumjs/gumscript.h")]
 	public interface Script : GLib.Object {
 		public delegate void MessageHandler (Gum.Script script, string message, GLib.Bytes? data);
-		public delegate void DebugMessageHandler (string message);
 
 		public async void load (GLib.Cancellable? cancellable = null);
 		public void load_sync (GLib.Cancellable? cancellable = null);
@@ -33,7 +29,7 @@ namespace Gum {
 		public void unload_sync (GLib.Cancellable? cancellable = null);
 
 		public void set_message_handler (owned Gum.Script.MessageHandler handler);
-		public void post_message (string message);
+		public void post (string message, GLib.Bytes? data = null);
 
 		public unowned Stalker get_stalker ();
 	}

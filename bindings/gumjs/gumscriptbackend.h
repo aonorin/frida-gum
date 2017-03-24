@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2015 Ole André Vadla Ravnås <oleavr@nowsecure.com>
+ * Copyright (C) 2010-2017 Ole André Vadla Ravnås <oleavr@nowsecure.com>
  *
  * Licence: wxWindows Library Licence, Version 3.1
  */
@@ -20,6 +20,9 @@
 
 typedef struct _GumScriptBackend GumScriptBackend;
 typedef struct _GumScriptBackendIface GumScriptBackendIface;
+
+typedef void (* GumScriptBackendDebugMessageHandler) (const gchar * message,
+    gpointer user_data);
 
 struct _GumScriptBackendIface
 {
@@ -51,14 +54,11 @@ struct _GumScriptBackendIface
       GCancellable * cancellable, GError ** error);
 
   void (* set_debug_message_handler) (GumScriptBackend * self,
-      GumScriptDebugMessageHandler handler, gpointer data,
+      GumScriptBackendDebugMessageHandler handler, gpointer data,
       GDestroyNotify data_destroy);
   void (* post_debug_message) (GumScriptBackend * self, const gchar * message);
 
-  void (* ignore) (GumScriptBackend * self, GumThreadId thread_id);
-  void (* unignore) (GumScriptBackend * self, GumThreadId thread_id);
-  void (* unignore_later) (GumScriptBackend * self, GumThreadId thread_id);
-  gboolean (* is_ignoring) (GumScriptBackend * self, GumThreadId thread_id);
+  GMainContext * (* get_main_context) (GumScriptBackend * self);
 };
 
 G_BEGIN_DECLS
@@ -95,15 +95,13 @@ GUM_API GBytes * gum_script_backend_compile_sync (GumScriptBackend * self,
     const gchar * source, GCancellable * cancellable, GError ** error);
 
 GUM_API void gum_script_backend_set_debug_message_handler (
-    GumScriptBackend * self, GumScriptDebugMessageHandler handler,
+    GumScriptBackend * self, GumScriptBackendDebugMessageHandler handler,
     gpointer data, GDestroyNotify data_destroy);
 GUM_API void gum_script_backend_post_debug_message (GumScriptBackend * self,
     const gchar * message);
 
-GUM_API void gum_script_backend_ignore (GumThreadId thread_id);
-GUM_API void gum_script_backend_unignore (GumThreadId thread_id);
-GUM_API void gum_script_backend_unignore_later (GumThreadId thread_id);
-GUM_API gboolean gum_script_backend_is_ignoring (GumThreadId thread_id);
+GUM_API GMainContext * gum_script_backend_get_main_context (
+    GumScriptBackend * self);
 
 G_END_DECLS
 

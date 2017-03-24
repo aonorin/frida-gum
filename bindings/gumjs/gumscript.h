@@ -24,8 +24,6 @@ typedef struct _GumScriptIface GumScriptIface;
 
 typedef void (* GumScriptMessageHandler) (GumScript * script,
     const gchar * message, GBytes * data, gpointer user_data);
-typedef void (* GumScriptDebugMessageHandler) (const gchar * message,
-    gpointer user_data);
 
 struct _GumScriptIface
 {
@@ -43,7 +41,7 @@ struct _GumScriptIface
   void (* set_message_handler) (GumScript * self,
       GumScriptMessageHandler handler, gpointer data,
       GDestroyNotify data_destroy);
-  void (* post_message) (GumScript * self, const gchar * message);
+  void (* post) (GumScript * self, const gchar * message, GBytes * data);
 
   GumStalker * (* get_stalker) (GumScript * self);
 };
@@ -66,7 +64,8 @@ GUM_API void gum_script_unload_sync (GumScript * self,
 GUM_API void gum_script_set_message_handler (GumScript * self,
     GumScriptMessageHandler handler, gpointer data,
     GDestroyNotify data_destroy);
-GUM_API void gum_script_post_message (GumScript * self, const gchar * message);
+GUM_API void gum_script_post (GumScript * self, const gchar * message,
+    GBytes * data);
 
 GUM_API GumStalker * gum_script_get_stalker (GumScript * self);
 

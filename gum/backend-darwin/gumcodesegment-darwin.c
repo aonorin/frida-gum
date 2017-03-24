@@ -1,11 +1,12 @@
 /*
- * Copyright (C) 2016 Ole André Vadla Ravnås <oleavr@nowsecure.com>
+ * Copyright (C) 2016-2017 Ole André Vadla Ravnås <oleavr@nowsecure.com>
  *
  * Licence: wxWindows Library Licence, Version 3.1
  */
 
 #include "gumcodesegment.h"
 
+#include "gumcloak.h"
 #include "gumdarwin.h"
 
 #include <CommonCrypto/CommonDigest.h>
@@ -122,10 +123,14 @@ gum_code_segment_is_supported (void)
   if (g_once_init_enter (&cached_result))
   {
     gboolean supported = FALSE;
+    gpointer scratch_page;
     GumCodeSegment * segment;
 
     segment = gum_code_segment_new (1, NULL);
+    scratch_page = gum_code_segment_get_address (segment);
     supported = gum_code_segment_try_realize (segment);
+    if (supported)
+      supported = gum_code_segment_try_map (segment, 0, 1, scratch_page);
     gum_code_segment_free (segment);
 
     g_once_init_leave (&cached_result, supported + 1);
@@ -144,6 +149,7 @@ gum_code_segment_new (gsize size,
   guint page_size, size_in_pages;
   gpointer data;
   GumCodeSegment * segment;
+  GumMemoryRange range;
 
   page_size = gum_query_page_size ();
   size_in_pages = size / page_size;
@@ -170,16 +176,26 @@ gum_code_segment_new (gsize size,
 
   segment->fd = -1;
 
+  range.base_address = GUM_ADDRESS (segment->data);
+  range.size = segment->virtual_size;
+  gum_cloak_add_range (&range);
+
   return segment;
 }
 
 void
 gum_code_segment_free (GumCodeSegment * segment)
 {
+  GumMemoryRange range;
+
   if (segment->fd != -1)
     close (segment->fd);
 
   gum_free_pages (segment->data);
+
+  range.base_address = GUM_ADDRESS (segment->data);
+  range.size = segment->virtual_size;
+  gum_cloak_remove_range (&range);
 
   g_slice_free (GumCodeSegment, segment);
 }

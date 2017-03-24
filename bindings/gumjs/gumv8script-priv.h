@@ -26,8 +26,6 @@
 #include "gumv8symbol.h"
 #include "gumv8thread.h"
 
-G_BEGIN_DECLS
-
 typedef guint GumScriptState;
 
 struct _GumV8ScriptPrivate
@@ -47,8 +45,8 @@ struct _GumV8ScriptPrivate
   GumV8Thread thread;
   GumV8Module module;
   GumV8File file;
-  GumV8Socket socket;
   GumV8Stream stream;
+  GumV8Socket socket;
   GumV8Interceptor interceptor;
   GumV8Stalker stalker;
   GumV8ApiResolver api_resolver;
@@ -61,7 +59,5 @@ struct _GumV8ScriptPrivate
   gpointer message_handler_data;
   GDestroyNotify message_handler_data_destroy;
 };
-
-G_END_DECLS
 
 #endif

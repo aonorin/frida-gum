@@ -117,6 +117,9 @@
     <ClCompile Include="gum\gumbacktracer.c">
       <Filter>core</Filter>
     </ClCompile>
+    <ClCompile Include="gum\gumcloak.c">
+      <Filter>core</Filter>
+    </ClCompile>
     <ClCompile Include="gum\backend-dbghelp\gumdbghelp.c">
       <Filter>core\backend-dbghelp</Filter>
     </ClCompile>
@@ -165,6 +168,9 @@
     <ClCompile Include="gum\gummemorymap.c">
       <Filter>core</Filter>
     </ClCompile>
+    <ClCompile Include="gum\gummetalarray.c">
+      <Filter>core</Filter>
+    </ClCompile>
     <ClCompile Include="gum\gummetalhash.c">
       <Filter>core</Filter>
     </ClCompile>
@@ -187,6 +193,9 @@
       <Filter>libs\heap</Filter>
     </ClCompile>
     <ClCompile Include="gum\backend-windows\gumprocess-windows.c">
+      <Filter>core\backend-windows</Filter>
+    </ClCompile>
+    <ClCompile Include="gum\backend-windows\gumexceptor-windows.c">
       <Filter>core\backend-windows</Filter>
     </ClCompile>
     <ClCompile Include="gum\arch-arm64\gumarm64relocator.c">
@@ -237,6 +246,9 @@
       <Filter>core</Filter>
     </ClInclude>
     <ClInclude Include="gum\gummemorymap.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="gum\gummetalarray.h">
       <Filter>core</Filter>
     </ClInclude>
     <ClInclude Include="gum\gummetalhash.h">
@@ -323,6 +335,12 @@
     <ClInclude Include="gum\gumbacktracer.h">
       <Filter>core</Filter>
     </ClInclude>
+    <ClInclude Include="gum\gumcloak.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="gum\gumcloak-priv.h">
+      <Filter>core</Filter>
+    </ClInclude>
     <ClInclude Include="gum\backend-dbghelp\gumdbghelp.h">
       <Filter>core\backend-dbghelp</Filter>
     </ClInclude>
@@ -363,6 +381,9 @@
       <Filter>libs\heap</Filter>
     </ClInclude>
     <ClInclude Include="gum\gumexceptor.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="gum\gumexceptorbackend.h">
       <Filter>core</Filter>
     </ClInclude>
     <ClInclude Include="gum\gumevent.h">
@@ -420,6 +441,9 @@
       <Filter>core</Filter>
     </ClInclude>
     <ClInclude Include="gum\gumprocess.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="gum\gumprocess-priv.h">
       <Filter>core</Filter>
     </ClInclude>
     <ClInclude Include="gum\arch-x86\gumx86backtracer.h">

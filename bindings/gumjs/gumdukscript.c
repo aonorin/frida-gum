@@ -26,11 +26,18 @@
 
 #include <gum/guminvocationlistener.h>
 
+#define GUM_DUK_SCRIPT_DEBUGGER_LOCK(o) g_mutex_lock (&(o)->mutex)
+#define GUM_DUK_SCRIPT_DEBUGGER_UNLOCK(o) g_mutex_unlock (&(o)->mutex)
+
+#define GUM_DUK_SCRIPT_DEBUGGER_WAIT(o) g_cond_wait (&(o)->cond, &(o)->mutex)
+#define GUM_DUK_SCRIPT_DEBUGGER_SIGNAL(o) g_cond_signal (&(o)->cond)
+
 typedef guint GumScriptState;
+typedef struct _GumDukScriptDebugger GumDukScriptDebugger;
 typedef struct _GumUnloadNotifyCallback GumUnloadNotifyCallback;
 typedef void (* GumUnloadNotifyFunc) (GumDukScript * self, gpointer user_data);
-typedef struct _GumEmitMessageData GumEmitMessageData;
-typedef struct _GumPostMessageData GumPostMessageData;
+typedef struct _GumEmitData GumEmitData;
+typedef struct _GumPostData GumPostData;
 
 enum
 {
@@ -40,6 +47,29 @@ enum
   PROP_BYTECODE,
   PROP_MAIN_CONTEXT,
   PROP_BACKEND
+};
+
+enum
+{
+  SIGNAL_DEBUGGER_DETACHED,
+  SIGNAL_DEBUGGER_OUTPUT,
+
+  LAST_SIGNAL
+};
+
+struct _GumDukScriptDebugger
+{
+  GMutex mutex;
+  GCond cond;
+
+  volatile gboolean attached;
+  volatile gboolean cancelled;
+
+  GByteArray * unread;
+  duk_size_t unread_offset;
+  GByteArray * unwritten;
+
+  GumDukScript * script;
 };
 
 struct _GumDukScriptPrivate
@@ -61,8 +91,8 @@ struct _GumDukScriptPrivate
   GumDukThread thread;
   GumDukModule module;
   GumDukFile file;
-  GumDukSocket socket;
   GumDukStream stream;
+  GumDukSocket socket;
   GumDukInterceptor interceptor;
   GumDukStalker stalker;
   GumDukApiResolver api_resolver;
@@ -72,6 +102,8 @@ struct _GumDukScriptPrivate
   GumScriptMessageHandler message_handler;
   gpointer message_handler_data;
   GDestroyNotify message_handler_data_destroy;
+
+  GumDukScriptDebugger debugger;
 };
 
 enum _GumScriptState
@@ -88,17 +120,18 @@ struct _GumUnloadNotifyCallback
   GDestroyNotify data_destroy;
 };
 
-struct _GumEmitMessageData
+struct _GumEmitData
 {
   GumDukScript * script;
   gchar * message;
   GBytes * data;
 };
 
-struct _GumPostMessageData
+struct _GumPostData
 {
   GumDukScript * script;
   gchar * message;
+  GBytes * data;
 };
 
 static void gum_duk_script_iface_init (gpointer g_iface, gpointer iface_data);
@@ -117,8 +150,8 @@ static void gum_duk_script_load_finish (GumScript * script,
     GAsyncResult * result);
 static void gum_duk_script_load_sync (GumScript * script,
     GCancellable * cancellable);
-static void gum_duk_script_do_load (GumScriptTask * task,
-    gpointer source_object, gpointer task_data, GCancellable * cancellable);
+static void gum_duk_script_do_load (GumScriptTask * task, GumDukScript * self,
+    gpointer task_data, GCancellable * cancellable);
 static void gum_duk_script_perform_load_task (GumDukScript * self,
     GumScriptTask * task);
 static void gum_duk_script_unload (GumScript * script,
@@ -128,8 +161,8 @@ static void gum_duk_script_unload_finish (GumScript * script,
     GAsyncResult * result);
 static void gum_duk_script_unload_sync (GumScript * script,
     GCancellable * cancellable);
-static void gum_duk_script_do_unload (GumScriptTask * task,
-    gpointer source_object, gpointer task_data, GCancellable * cancellable);
+static void gum_duk_script_do_unload (GumScriptTask * task, GumDukScript * self,
+    gpointer task_data, GCancellable * cancellable);
 static void gum_duk_script_complete_unload_task (GumDukScript * self,
     GumScriptTask * task);
 static void gum_duk_script_try_unload (GumDukScript * self);
@@ -139,17 +172,41 @@ static void gum_duk_script_once_unloaded (GumDukScript * self,
 static void gum_duk_script_set_message_handler (GumScript * script,
     GumScriptMessageHandler handler, gpointer data,
     GDestroyNotify data_destroy);
-static void gum_duk_script_post_message (GumScript * script,
-    const gchar * message);
-static void gum_duk_script_do_post_message (GumPostMessageData * d);
-static void gum_duk_post_message_data_free (GumPostMessageData * d);
+static void gum_duk_script_post (GumScript * script, const gchar * message,
+    GBytes * data);
+static void gum_duk_script_do_post (GumPostData * d);
+static void gum_duk_post_data_free (GumPostData * d);
 
 static GumStalker * gum_duk_script_get_stalker (GumScript * script);
 
-static void gum_duk_script_emit_message (GumDukScript * self,
+static void gum_duk_script_emit (GumDukScript * self,
     const gchar * message, GBytes * data);
-static gboolean gum_duk_script_do_emit_message (GumEmitMessageData * d);
-static void gum_duk_emit_message_data_free (GumEmitMessageData * d);
+static gboolean gum_duk_script_do_emit (GumEmitData * d);
+static void gum_duk_emit_data_free (GumEmitData * d);
+
+static void gum_duk_script_do_attach_debugger (GumDukScript * self);
+static void gum_duk_script_do_detach_debugger (GumDukScript * self);
+static void gum_duk_script_awaken_debugger (GumDukScript * self);
+
+static void gum_duk_script_debugger_init (GumDukScriptDebugger * self,
+    GumDukScript * script);
+static void gum_duk_script_debugger_finalize (GumDukScriptDebugger * self);
+static void gum_duk_script_debugger_attach (GumDukScriptDebugger * self);
+static void gum_duk_script_debugger_detach (GumDukScriptDebugger * self);
+static void gum_duk_script_debugger_cancel (GumDukScriptDebugger * self);
+static gboolean gum_duk_script_debugger_try_post (GumDukScriptDebugger * self,
+    GBytes * bytes);
+static void gum_duk_script_debugger_process_pending (
+    GumDukScriptDebugger * self);
+static duk_size_t gum_duk_script_debugger_on_read (GumDukScriptDebugger * self,
+    char * buffer, duk_size_t length);
+static duk_size_t gum_duk_script_debugger_on_write (GumDukScriptDebugger * self,
+    const char * buffer, duk_size_t length);
+static duk_size_t gum_duk_script_debugger_on_peek (GumDukScriptDebugger * self);
+static void gum_duk_script_debugger_on_write_flush (
+    GumDukScriptDebugger * self);
+static void gum_duk_script_debugger_on_detached (duk_context * ctx,
+    GumDukScriptDebugger * self);
 
 G_DEFINE_TYPE_EXTENDED (GumDukScript,
                         gum_duk_script,
@@ -157,6 +214,8 @@ G_DEFINE_TYPE_EXTENDED (GumDukScript,
                         0,
                         G_IMPLEMENT_INTERFACE (GUM_TYPE_SCRIPT,
                             gum_duk_script_iface_init));
+
+static guint gum_duk_script_signals[LAST_SIGNAL] = { 0, };
 
 static void
 gum_duk_script_class_init (GumDukScriptClass * klass)
@@ -170,28 +229,36 @@ gum_duk_script_class_init (GumDukScriptClass * klass)
   object_class->get_property = gum_duk_script_get_property;
   object_class->set_property = gum_duk_script_set_property;
 
+  klass->debugger_detached = NULL;
+  klass->debugger_output = NULL;
+
   g_object_class_install_property (object_class, PROP_NAME,
       g_param_spec_string ("name", "Name", "Name", NULL,
-      (GParamFlags) (G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY |
-      G_PARAM_STATIC_STRINGS)));
+      G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (object_class, PROP_SOURCE,
       g_param_spec_string ("source", "Source", "Source code", NULL,
-      (GParamFlags) (G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY |
-      G_PARAM_STATIC_STRINGS)));
+      G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (object_class, PROP_BYTECODE,
       g_param_spec_boxed ("bytecode", "Bytecode", "Bytecode", G_TYPE_BYTES,
-      (GParamFlags) (G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY |
-      G_PARAM_STATIC_STRINGS)));
+      G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (object_class, PROP_MAIN_CONTEXT,
       g_param_spec_boxed ("main-context", "MainContext",
       "MainContext being used", G_TYPE_MAIN_CONTEXT,
-      (GParamFlags) (G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY |
-      G_PARAM_STATIC_STRINGS)));
+      G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (object_class, PROP_BACKEND,
       g_param_spec_object ("backend", "Backend", "Backend being used",
       GUM_DUK_TYPE_SCRIPT_BACKEND,
-      (GParamFlags) (G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY |
-      G_PARAM_STATIC_STRINGS)));
+      G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS));
+
+  gum_duk_script_signals[SIGNAL_DEBUGGER_DETACHED] =
+      g_signal_new ("debugger-detached", G_TYPE_FROM_CLASS (klass),
+      G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET (GumDukScriptClass, debugger_detached),
+      NULL, NULL, g_cclosure_marshal_VOID__VOID, G_TYPE_NONE, 0);
+  gum_duk_script_signals[SIGNAL_DEBUGGER_OUTPUT] =
+      g_signal_new ("debugger-output", G_TYPE_FROM_CLASS (klass),
+      G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET (GumDukScriptClass, debugger_output),
+      NULL, NULL, g_cclosure_marshal_VOID__BOXED, G_TYPE_NONE, 1,
+      G_TYPE_BYTES);
 }
 
 static void
@@ -210,7 +277,7 @@ gum_duk_script_iface_init (gpointer g_iface,
   iface->unload_sync = gum_duk_script_unload_sync;
 
   iface->set_message_handler = gum_duk_script_set_message_handler;
-  iface->post_message = gum_duk_script_post_message;
+  iface->post = gum_duk_script_post;
 
   iface->get_stalker = gum_duk_script_get_stalker;
 }
@@ -225,6 +292,8 @@ gum_duk_script_init (GumDukScript * self)
 
   priv->state = GUM_SCRIPT_STATE_UNLOADED;
   priv->on_unload = NULL;
+
+  gum_duk_script_debugger_init (&priv->debugger, self);
 }
 
 static void
@@ -255,6 +324,8 @@ gum_duk_script_finalize (GObject * object)
 {
   GumDukScript * self = GUM_DUK_SCRIPT (object);
   GumDukScriptPrivate * priv = self->priv;
+
+  gum_duk_script_debugger_finalize (&priv->debugger);
 
   g_free (priv->name);
   g_free (priv->source);
@@ -338,7 +409,6 @@ gum_duk_script_create_context (GumDukScript * self,
 {
   GumDukScriptPrivate * priv = self->priv;
   duk_context * ctx;
-  GumDukScope scope;
 
   g_assert (priv->ctx == NULL);
 
@@ -357,7 +427,7 @@ gum_duk_script_create_context (GumDukScript * self,
 
     duk_load_function (ctx);
 
-    url = g_strconcat ("file:///", priv->name, ".js", NULL);
+    url = g_strconcat (priv->name, ".js", NULL);
     duk_push_string (ctx, url);
     duk_put_prop_string (ctx, -2, "fileName");
     g_free (url);
@@ -379,8 +449,8 @@ gum_duk_script_create_context (GumDukScript * self,
 
   priv->ctx = ctx;
 
-  _gum_duk_core_init (&priv->core, self, &priv->interceptor,
-      gum_duk_script_emit_message,
+  _gum_duk_core_init (&priv->core, self, gumjs_frida_source_map,
+      &priv->interceptor, gum_duk_script_emit,
       gum_duk_script_backend_get_scheduler (priv->backend), priv->ctx);
 
   priv->core.current_ctx = priv->core.heap_ctx;
@@ -391,8 +461,8 @@ gum_duk_script_create_context (GumDukScript * self,
   _gum_duk_thread_init (&priv->thread, &priv->core);
   _gum_duk_module_init (&priv->module, &priv->core);
   _gum_duk_file_init (&priv->file, &priv->core);
-  _gum_duk_socket_init (&priv->socket, &priv->core);
   _gum_duk_stream_init (&priv->stream, &priv->core);
+  _gum_duk_socket_init (&priv->socket, &priv->core);
   _gum_duk_interceptor_init (&priv->interceptor, &priv->core);
   _gum_duk_stalker_init (&priv->stalker, &priv->core);
   _gum_duk_api_resolver_init (&priv->api_resolver, &priv->core);
@@ -400,12 +470,6 @@ gum_duk_script_create_context (GumDukScript * self,
   _gum_duk_instruction_init (&priv->instruction, &priv->core);
 
   priv->core.current_ctx = NULL;
-
-  _gum_duk_scope_enter (&scope, &priv->core);
-
-  gum_duk_bundle_load (gum_duk_script_runtime_modules, priv->ctx);
-
-  _gum_duk_scope_leave (&scope);
 
   return TRUE;
 }
@@ -425,8 +489,8 @@ gum_duk_script_destroy_context (GumDukScript * self)
   _gum_duk_api_resolver_dispose (&priv->api_resolver);
   _gum_duk_stalker_dispose (&priv->stalker);
   _gum_duk_interceptor_dispose (&priv->interceptor);
-  _gum_duk_stream_dispose (&priv->stream);
   _gum_duk_socket_dispose (&priv->socket);
+  _gum_duk_stream_dispose (&priv->stream);
   _gum_duk_file_dispose (&priv->file);
   _gum_duk_module_dispose (&priv->module);
   _gum_duk_thread_dispose (&priv->thread);
@@ -448,8 +512,8 @@ gum_duk_script_destroy_context (GumDukScript * self)
   _gum_duk_api_resolver_finalize (&priv->api_resolver);
   _gum_duk_stalker_finalize (&priv->stalker);
   _gum_duk_interceptor_finalize (&priv->interceptor);
-  _gum_duk_stream_finalize (&priv->stream);
   _gum_duk_socket_finalize (&priv->socket);
+  _gum_duk_stream_finalize (&priv->stream);
   _gum_duk_file_finalize (&priv->file);
   _gum_duk_module_finalize (&priv->module);
   _gum_duk_thread_finalize (&priv->thread);
@@ -468,8 +532,8 @@ gum_duk_script_load (GumScript * script,
   GumDukScript * self = GUM_DUK_SCRIPT (script);
   GumScriptTask * task;
 
-  task = gum_script_task_new (gum_duk_script_do_load, self, cancellable,
-      callback, user_data);
+  task = gum_script_task_new ((GumScriptTaskFunc) gum_duk_script_do_load, self,
+      cancellable, callback, user_data);
   gum_script_task_run_in_js_thread (task,
       gum_duk_script_backend_get_scheduler (self->priv->backend));
   g_object_unref (task);
@@ -491,8 +555,8 @@ gum_duk_script_load_sync (GumScript * script,
   GumDukScript * self = GUM_DUK_SCRIPT (script);
   GumScriptTask * task;
 
-  task = gum_script_task_new (gum_duk_script_do_load, self, cancellable, NULL,
-      NULL);
+  task = gum_script_task_new ((GumScriptTaskFunc) gum_duk_script_do_load, self,
+      cancellable, NULL, NULL);
   gum_script_task_run_in_js_thread_sync (task,
       gum_duk_script_backend_get_scheduler (self->priv->backend));
   gum_script_task_propagate_pointer (task, NULL);
@@ -501,12 +565,10 @@ gum_duk_script_load_sync (GumScript * script,
 
 static void
 gum_duk_script_do_load (GumScriptTask * task,
-                        gpointer source_object,
+                        GumDukScript * self,
                         gpointer task_data,
                         GCancellable * cancellable)
 {
-  GumDukScript * self = GUM_DUK_SCRIPT (source_object);
-
   (void) task_data;
   (void) cancellable;
 
@@ -535,6 +597,7 @@ gum_duk_script_perform_load_task (GumDukScript * self,
   if (priv->state == GUM_SCRIPT_STATE_UNLOADED)
   {
     GumDukScope scope;
+    duk_context * ctx;
 
     if (priv->ctx == NULL)
     {
@@ -544,11 +607,13 @@ gum_duk_script_perform_load_task (GumDukScript * self,
       g_assert (created);
     }
 
-    _gum_duk_scope_enter (&scope, &priv->core);
+    ctx = _gum_duk_scope_enter (&scope, &priv->core);
 
-    duk_push_heapptr (priv->ctx, priv->code);
+    gum_duk_bundle_load (gumjs_runtime_modules, ctx);
+
+    duk_push_heapptr (ctx, priv->code);
     _gum_duk_scope_call (&scope, 0);
-    duk_pop (priv->ctx);
+    duk_pop (ctx);
 
     _gum_duk_scope_leave (&scope);
 
@@ -567,8 +632,8 @@ gum_duk_script_unload (GumScript * script,
   GumDukScript * self = GUM_DUK_SCRIPT (script);
   GumScriptTask * task;
 
-  task = gum_script_task_new (gum_duk_script_do_unload, self, cancellable,
-      callback, user_data);
+  task = gum_script_task_new ((GumScriptTaskFunc) gum_duk_script_do_unload,
+      self, cancellable, callback, user_data);
   gum_script_task_run_in_js_thread (task,
       gum_duk_script_backend_get_scheduler (self->priv->backend));
   g_object_unref (task);
@@ -590,8 +655,8 @@ gum_duk_script_unload_sync (GumScript * script,
   GumDukScript * self = GUM_DUK_SCRIPT (script);
   GumScriptTask * task;
 
-  task = gum_script_task_new (gum_duk_script_do_unload, self, cancellable, NULL,
-      NULL);
+  task = gum_script_task_new ((GumScriptTaskFunc) gum_duk_script_do_unload,
+      self, cancellable, NULL, NULL);
   gum_script_task_run_in_js_thread_sync (task,
       gum_duk_script_backend_get_scheduler (self->priv->backend));
   gum_script_task_propagate_pointer (task, NULL);
@@ -600,11 +665,10 @@ gum_duk_script_unload_sync (GumScript * script,
 
 static void
 gum_duk_script_do_unload (GumScriptTask * task,
-                          gpointer source_object,
+                          GumDukScript * self,
                           gpointer task_data,
                           GCancellable * cancellable)
 {
-  GumDukScript * self = GUM_DUK_SCRIPT (source_object);
   GumDukScriptPrivate * priv = self->priv;
 
   (void) task_data;
@@ -654,6 +718,7 @@ gum_duk_script_try_unload (GumDukScript * self)
 
   _gum_duk_stalker_flush (&priv->stalker);
   _gum_duk_interceptor_flush (&priv->interceptor);
+  _gum_duk_socket_flush (&priv->socket);
   _gum_duk_stream_flush (&priv->stream);
   _gum_duk_process_flush (&priv->process);
   success = _gum_duk_core_flush (&priv->core, gum_duk_script_try_unload);
@@ -715,36 +780,43 @@ gum_duk_script_set_message_handler (GumScript * script,
 }
 
 static void
-gum_duk_script_post_message (GumScript * script,
-                             const gchar * message)
+gum_duk_script_post (GumScript * script,
+                     const gchar * message,
+                     GBytes * data)
 {
   GumDukScript * self = GUM_DUK_SCRIPT (script);
-  GumPostMessageData * d;
+  GumPostData * d;
 
-  d = g_slice_new (GumPostMessageData);
+  d = g_slice_new (GumPostData);
   d->script = self;
   g_object_ref (self);
   d->message = g_strdup (message);
+  d->data = (data != NULL) ? g_bytes_ref (data) : NULL;
 
   gum_script_scheduler_push_job_on_js_thread (
       gum_duk_script_backend_get_scheduler (self->priv->backend),
-      G_PRIORITY_DEFAULT, (GumScriptJobFunc) gum_duk_script_do_post_message, d,
-      (GDestroyNotify) gum_duk_post_message_data_free);
+      G_PRIORITY_DEFAULT, (GumScriptJobFunc) gum_duk_script_do_post, d,
+      (GDestroyNotify) gum_duk_post_data_free);
 }
 
 static void
-gum_duk_script_do_post_message (GumPostMessageData * d)
+gum_duk_script_do_post (GumPostData * d)
 {
-  _gum_duk_core_post_message (&d->script->priv->core, d->message);
+  GBytes * data;
+
+  data = d->data;
+  d->data = NULL;
+
+  _gum_duk_core_post (&d->script->priv->core, d->message, data);
 }
 
 static void
-gum_duk_post_message_data_free (GumPostMessageData * d)
+gum_duk_post_data_free (GumPostData * d)
 {
   g_free (d->message);
   g_object_unref (d->script);
 
-  g_slice_free (GumPostMessageData, d);
+  g_slice_free (GumPostData, d);
 }
 
 static GumStalker *
@@ -756,14 +828,14 @@ gum_duk_script_get_stalker (GumScript * script)
 }
 
 static void
-gum_duk_script_emit_message (GumDukScript * self,
-                             const gchar * message,
-                             GBytes * data)
+gum_duk_script_emit (GumDukScript * self,
+                     const gchar * message,
+                     GBytes * data)
 {
-  GumEmitMessageData * d;
+  GumEmitData * d;
   GSource * source;
 
-  d = g_slice_new (GumEmitMessageData);
+  d = g_slice_new (GumEmitData);
   d->script = self;
   g_object_ref (self);
   d->message = g_strdup (message);
@@ -771,15 +843,15 @@ gum_duk_script_emit_message (GumDukScript * self,
 
   source = g_idle_source_new ();
   g_source_set_callback (source,
-      (GSourceFunc) gum_duk_script_do_emit_message,
+      (GSourceFunc) gum_duk_script_do_emit,
       d,
-      (GDestroyNotify) gum_duk_emit_message_data_free);
+      (GDestroyNotify) gum_duk_emit_data_free);
   g_source_attach (source, self->priv->main_context);
   g_source_unref (source);
 }
 
 static gboolean
-gum_duk_script_do_emit_message (GumEmitMessageData * d)
+gum_duk_script_do_emit (GumEmitData * d)
 {
   GumDukScript * self = d->script;
   GumDukScriptPrivate * priv = self->priv;
@@ -794,13 +866,328 @@ gum_duk_script_do_emit_message (GumEmitMessageData * d)
 }
 
 static void
-gum_duk_emit_message_data_free (GumEmitMessageData * d)
+gum_duk_emit_data_free (GumEmitData * d)
 {
   g_bytes_unref (d->data);
   g_free (d->message);
   g_object_unref (d->script);
 
-  g_slice_free (GumEmitMessageData, d);
+  g_slice_free (GumEmitData, d);
+}
+
+void
+gum_duk_script_attach_debugger (GumDukScript * self)
+{
+  gum_script_scheduler_push_job_on_js_thread (
+      gum_duk_script_backend_get_scheduler (self->priv->backend),
+      G_PRIORITY_DEFAULT, (GumScriptJobFunc) gum_duk_script_do_attach_debugger,
+      g_object_ref (self), g_object_unref);
+}
+
+static void
+gum_duk_script_do_attach_debugger (GumDukScript * self)
+{
+  GumDukScriptPrivate * priv = self->priv;
+  GumDukScope scope;
+
+  if (priv->ctx == NULL)
+    return;
+
+  _gum_duk_scope_enter (&scope, &priv->core);
+
+  gum_duk_script_debugger_attach (&priv->debugger);
+
+  _gum_duk_scope_leave (&scope);
+}
+
+void
+gum_duk_script_detach_debugger (GumDukScript * self)
+{
+  gum_duk_script_debugger_cancel (&self->priv->debugger);
+
+  gum_script_scheduler_push_job_on_js_thread (
+      gum_duk_script_backend_get_scheduler (self->priv->backend),
+      G_PRIORITY_DEFAULT, (GumScriptJobFunc) gum_duk_script_do_detach_debugger,
+      g_object_ref (self), g_object_unref);
+}
+
+static void
+gum_duk_script_do_detach_debugger (GumDukScript * self)
+{
+  GumDukScriptPrivate * priv = self->priv;
+  GumDukScope scope;
+
+  if (priv->ctx == NULL)
+    return;
+
+  _gum_duk_scope_enter (&scope, &priv->core);
+
+  gum_duk_script_debugger_detach (&priv->debugger);
+
+  _gum_duk_scope_leave (&scope);
+}
+
+void
+gum_duk_script_post_to_debugger (GumDukScript * self,
+                                 GBytes * bytes)
+{
+  gboolean delivered;
+
+  delivered = gum_duk_script_debugger_try_post (&self->priv->debugger, bytes);
+  if (!delivered)
+    return;
+
+  gum_script_scheduler_push_job_on_js_thread (
+      gum_duk_script_backend_get_scheduler (self->priv->backend),
+      G_PRIORITY_DEFAULT, (GumScriptJobFunc) gum_duk_script_awaken_debugger,
+      g_object_ref (self), g_object_unref);
+}
+
+static void
+gum_duk_script_awaken_debugger (GumDukScript * self)
+{
+  GumDukScriptPrivate * priv = self->priv;
+  GumDukScope scope;
+
+  if (priv->ctx == NULL)
+    return;
+
+  _gum_duk_scope_enter (&scope, &priv->core);
+
+  gum_duk_script_debugger_process_pending (&priv->debugger);
+
+  _gum_duk_scope_leave (&scope);
+}
+
+static void
+gum_duk_script_debugger_init (GumDukScriptDebugger * self,
+                              GumDukScript * script)
+{
+  g_mutex_init (&self->mutex);
+  g_cond_init (&self->cond);
+
+  self->attached = FALSE;
+  self->cancelled = FALSE;
+
+  self->unread = NULL;
+  self->unread_offset = 0;
+  self->unwritten = g_byte_array_new ();
+
+  self->script = script;
+}
+
+static void
+gum_duk_script_debugger_finalize (GumDukScriptDebugger * self)
+{
+  g_clear_pointer (&self->unwritten, g_byte_array_unref);
+  g_clear_pointer (&self->unread, g_byte_array_unref);
+
+  g_cond_clear (&self->cond);
+  g_mutex_clear (&self->mutex);
+}
+
+static void
+gum_duk_script_debugger_attach (GumDukScriptDebugger * self)
+{
+  GUM_DUK_SCRIPT_DEBUGGER_LOCK (self);
+
+  if (self->attached)
+  {
+    GUM_DUK_SCRIPT_DEBUGGER_UNLOCK (self);
+    return;
+  }
+
+  self->attached = TRUE;
+  self->cancelled = FALSE;
+
+  GUM_DUK_SCRIPT_DEBUGGER_UNLOCK (self);
+
+  duk_debugger_attach (self->script->priv->core.heap_ctx,
+      (duk_debug_read_function) gum_duk_script_debugger_on_read,
+      (duk_debug_write_function) gum_duk_script_debugger_on_write,
+      (duk_debug_peek_function) gum_duk_script_debugger_on_peek,
+      (duk_debug_read_flush_function) NULL,
+      (duk_debug_write_flush_function) gum_duk_script_debugger_on_write_flush,
+      (duk_debug_request_function) NULL,
+      (duk_debug_detached_function) gum_duk_script_debugger_on_detached,
+      self);
+}
+
+static void
+gum_duk_script_debugger_detach (GumDukScriptDebugger * self)
+{
+  gboolean attached;
+
+  GUM_DUK_SCRIPT_DEBUGGER_LOCK (self);
+  attached = self->attached;
+  GUM_DUK_SCRIPT_DEBUGGER_UNLOCK (self);
+
+  if (!attached)
+    return;
+
+  duk_debugger_detach (self->script->priv->core.heap_ctx);
+}
+
+static void
+gum_duk_script_debugger_cancel (GumDukScriptDebugger * self)
+{
+  GUM_DUK_SCRIPT_DEBUGGER_LOCK (self);
+  self->cancelled = TRUE;
+  GUM_DUK_SCRIPT_DEBUGGER_SIGNAL (self);
+  GUM_DUK_SCRIPT_DEBUGGER_UNLOCK (self);
+}
+
+static gboolean
+gum_duk_script_debugger_try_post (GumDukScriptDebugger * self,
+                                  GBytes * bytes)
+{
+  GUM_DUK_SCRIPT_DEBUGGER_LOCK (self);
+
+  if (!self->attached)
+  {
+    GUM_DUK_SCRIPT_DEBUGGER_UNLOCK (self);
+
+    g_bytes_unref (bytes);
+
+    return FALSE;
+  }
+
+  if (self->unread == NULL)
+  {
+    self->unread = g_bytes_unref_to_array (bytes);
+  }
+  else
+  {
+    gpointer data;
+    gsize size;
+
+    data = g_bytes_unref_to_data (bytes, &size);
+    g_byte_array_append (self->unread, data, size);
+    g_free (data);
+  }
+
+  GUM_DUK_SCRIPT_DEBUGGER_SIGNAL (self);
+  GUM_DUK_SCRIPT_DEBUGGER_UNLOCK (self);
+
+  return TRUE;
+}
+
+static void
+gum_duk_script_debugger_process_pending (GumDukScriptDebugger * self)
+{
+  duk_debugger_cooperate (self->script->priv->core.heap_ctx);
+}
+
+static duk_size_t
+gum_duk_script_debugger_on_read (GumDukScriptDebugger * self,
+                                 char * buffer,
+                                 duk_size_t length)
+{
+  duk_size_t n = 0, available = 0;
+
+  GUM_DUK_SCRIPT_DEBUGGER_LOCK (self);
+
+  while ((self->unread == NULL ||
+      (available = self->unread->len - self->unread_offset) == 0) &&
+      !self->cancelled)
+  {
+    GUM_DUK_SCRIPT_DEBUGGER_WAIT (self);
+  }
+
+  if (available > 0)
+  {
+    n = MIN (length, available);
+    memcpy (buffer, self->unread->data + self->unread_offset, n);
+
+    self->unread_offset += n;
+
+    if (self->unread_offset == self->unread->len)
+    {
+      g_byte_array_unref (self->unread);
+      self->unread = NULL;
+      self->unread_offset = 0;
+    }
+    else if (self->unread_offset > 2048)
+    {
+      g_byte_array_remove_range (self->unread, 0, (guint) self->unread_offset);
+      self->unread_offset = 0;
+    }
+  }
+
+  GUM_DUK_SCRIPT_DEBUGGER_UNLOCK (self);
+
+  return n;
+}
+
+static duk_size_t
+gum_duk_script_debugger_on_write (GumDukScriptDebugger * self,
+                                  const char * buffer,
+                                  duk_size_t length)
+{
+  GUM_DUK_SCRIPT_DEBUGGER_LOCK (self);
+  g_byte_array_append (self->unwritten, (const guint8 *) buffer,
+      (guint) length);
+  GUM_DUK_SCRIPT_DEBUGGER_UNLOCK (self);
+
+  return length;
+}
+
+static duk_size_t
+gum_duk_script_debugger_on_peek (GumDukScriptDebugger * self)
+{
+  duk_size_t available;
+
+  GUM_DUK_SCRIPT_DEBUGGER_LOCK (self);
+
+  available = (self->unread != NULL)
+      ? self->unread->len - self->unread_offset
+      : 0;
+
+  GUM_DUK_SCRIPT_DEBUGGER_UNLOCK (self);
+
+  return available;
+}
+
+static void
+gum_duk_script_debugger_on_write_flush (GumDukScriptDebugger * self)
+{
+  GBytes * unwritten = NULL;
+
+  GUM_DUK_SCRIPT_DEBUGGER_LOCK (self);
+
+  if (self->unwritten->len > 0)
+  {
+    unwritten = g_byte_array_free_to_bytes (self->unwritten);
+    self->unwritten = g_byte_array_new ();
+  }
+
+  GUM_DUK_SCRIPT_DEBUGGER_UNLOCK (self);
+
+  if (unwritten == NULL)
+    return;
+
+  g_signal_emit (self->script, gum_duk_script_signals[SIGNAL_DEBUGGER_OUTPUT],
+      0, unwritten);
+
+  g_bytes_unref (unwritten);
+}
+
+static void
+gum_duk_script_debugger_on_detached (duk_context * ctx,
+                                     GumDukScriptDebugger * self)
+{
+  (void) ctx;
+
+  GUM_DUK_SCRIPT_DEBUGGER_LOCK (self);
+
+  self->attached = FALSE;
+  g_clear_pointer (&self->unread, g_byte_array_unref);
+  self->unread_offset = 0;
+
+  GUM_DUK_SCRIPT_DEBUGGER_UNLOCK (self);
+
+  g_signal_emit (self->script, gum_duk_script_signals[SIGNAL_DEBUGGER_DETACHED],
+      0);
 }
 
 void

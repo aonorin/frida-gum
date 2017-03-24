@@ -1,10 +1,10 @@
 /*
- * Copyright (C) 2010-2016 Ole André Vadla Ravnås <oleavr@nowsecure.com>
+ * Copyright (C) 2010-2017 Ole André Vadla Ravnås <oleavr@nowsecure.com>
  *
  * Licence: wxWindows Library Licence, Version 3.1
  */
 
-#include "gumprocess.h"
+#include "gumprocess-priv.h"
 
 #include "gumlinux.h"
 #include "gummodulemap.h"
@@ -551,8 +551,8 @@ gum_put_ack (gint fd,
 }
 
 void
-gum_process_enumerate_threads (GumFoundThreadFunc func,
-                               gpointer user_data)
+_gum_process_enumerate_threads (GumFoundThreadFunc func,
+                                gpointer user_data)
 {
   GDir * dir;
   const gchar * name;
@@ -593,8 +593,9 @@ gum_process_enumerate_modules (GumFoundModuleFunc func,
 {
   FILE * fp;
   const guint line_size = GUM_MAPS_LINE_SIZE;
-  gchar * line, * path, * prev_path;
+  gchar * line, * path, * next_path;
   gboolean carry_on = TRUE;
+  gboolean got_line = FALSE;
 
   fp = fopen ("/proc/self/maps", "r");
   g_assert (fp != NULL);
@@ -602,10 +603,9 @@ gum_process_enumerate_modules (GumFoundModuleFunc func,
   line = g_malloc (line_size);
 
   path = g_malloc (PATH_MAX);
-  prev_path = g_malloc (PATH_MAX);
-  prev_path[0] = '\0';
+  next_path = g_malloc (PATH_MAX);
 
-  while (carry_on && fgets (line, line_size, fp) != NULL)
+  do
   {
     const guint8 elf_magic[] = { 0x7f, 'E', 'L', 'F' };
     GumModuleDetails details;
@@ -615,6 +615,16 @@ gum_process_enumerate_modules (GumFoundModuleFunc func,
     gint n;
     gboolean readable, shared;
     gchar * name;
+
+    if (!got_line)
+    {
+      if (fgets (line, line_size, fp) == NULL)
+        break;
+    }
+    else
+    {
+      got_line = FALSE;
+    }
 
     n = sscanf (line,
         "%" G_GINT64_MODIFIER "x-%" G_GINT64_MODIFIER "x "
@@ -632,8 +642,6 @@ gum_process_enumerate_modules (GumFoundModuleFunc func,
     shared = perms[3] == 's';
     if (!readable || shared)
       continue;
-    else if (strcmp (path, prev_path) == 0)
-      continue;
     else if (path[0] != '/' || g_str_has_prefix (path, "/dev/"))
       continue;
     else if (RUNNING_ON_VALGRIND && strstr (path, "/valgrind/") != NULL)
@@ -650,15 +658,35 @@ gum_process_enumerate_modules (GumFoundModuleFunc func,
     details.range = &range;
     details.path = path;
 
+    while (fgets (line, line_size, fp) != NULL)
+    {
+      n = sscanf (line,
+          "%*x-%" G_GINT64_MODIFIER "x %*c%*c%*c%*c %*x %*s %*d %s",
+          &end,
+          next_path);
+      if (n == 1)
+      {
+        continue;
+      }
+      else if (n == 2 && strcmp (next_path, path) == 0)
+      {
+        range.size = end - range.base_address;
+      }
+      else
+      {
+        got_line = TRUE;
+        break;
+      }
+    }
+
     carry_on = func (&details, user_data);
 
     g_free (name);
-
-    strcpy (prev_path, path);
   }
+  while (carry_on);
 
   g_free (path);
-  g_free (prev_path);
+  g_free (next_path);
 
   g_free (line);
 
@@ -666,9 +694,9 @@ gum_process_enumerate_modules (GumFoundModuleFunc func,
 }
 
 void
-gum_process_enumerate_ranges (GumPageProtection prot,
-                              GumFoundRangeFunc func,
-                              gpointer user_data)
+_gum_process_enumerate_ranges (GumPageProtection prot,
+                               GumFoundRangeFunc func,
+                               gpointer user_data)
 {
   gum_linux_enumerate_ranges (getpid (), prot, func, user_data);
 }
@@ -750,6 +778,16 @@ gum_process_enumerate_malloc_ranges (GumFoundMallocRangeFunc func,
                                      gpointer user_data)
 {
   /* Not implemented */
+}
+
+gboolean
+gum_thread_try_get_range (GumMemoryRange * range)
+{
+  /* Not implemented */
+  range->base_address = 0;
+  range->size = 0;
+
+  return FALSE;
 }
 
 gint
@@ -1054,6 +1092,7 @@ gum_linux_cpu_type_from_pid (pid_t pid,
   gchar * auxv_path;
   guint8 * auxv;
   gsize auxv_size, i;
+  GumCpuType cpu32, cpu64;
 
   auxv_path = g_strdup_printf ("/proc/%d/auxv", pid);
 
@@ -1061,31 +1100,35 @@ gum_linux_cpu_type_from_pid (pid_t pid,
     goto beach;
 
 #if defined (HAVE_I386)
-  result = GUM_CPU_AMD64;
+  cpu32 = GUM_CPU_IA32;
+  cpu64 = GUM_CPU_AMD64;
 #elif defined (HAVE_ARM) || defined (HAVE_ARM64)
-  result = GUM_CPU_ARM64;
+  cpu32 = GUM_CPU_ARM;
+  cpu64 = GUM_CPU_ARM64;
 #elif defined (HAVE_MIPS)
-  result = GUM_CPU_MIPS;
+  cpu32 = GUM_CPU_MIPS;
+  cpu64 = GUM_CPU_MIPS;
 #else
 # error Unsupported architecture
 #endif
 
-  for (i = 0; i < auxv_size; i += 16)
+  if (auxv[0] != AT_NULL)
   {
-    if (auxv[4] != 0 || auxv[5] != 0 ||
-        auxv[6] != 0 || auxv[7] != 0)
+    result = cpu64;
+
+    for (i = 0; i < auxv_size; i += 16)
     {
-#if defined (HAVE_I386)
-      result = GUM_CPU_IA32;
-#elif defined (HAVE_ARM) || defined (HAVE_ARM64)
-      result = GUM_CPU_ARM;
-#elif defined (HAVE_MIPS)
-      result = GUM_CPU_MIPS;
-#else
-# error Unsupported architecture
-#endif
-      break;
+      if (auxv[4] != 0 || auxv[5] != 0 ||
+          auxv[6] != 0 || auxv[7] != 0)
+      {
+        result = cpu32;
+        break;
+      }
     }
+  }
+  else
+  {
+    result = (auxv_size == 8) ? cpu32 : cpu64;
   }
 
 beach:

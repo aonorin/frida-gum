@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2014 Ole André Vadla Ravnås <ole.andre.ravnas@tillitech.com>
+ * Copyright (C) 2008-2017 Ole André Vadla Ravnås <oleavr@nowsecure.com>
  * Copyright (C) 2008 Christian Berentsen <jc.berentsen@gmail.com>
  * Copyright (C) 2015 Asger Hautop Drewsen <asgerdrewsen@gmail.com>
  *
@@ -28,8 +28,12 @@ TEST_LIST_BEGIN (process)
 #ifndef HAVE_MIPS
   PROCESS_TESTENTRY (process_threads)
 #endif
+#if !defined (HAVE_ANDROID) && !defined (HAVE_MIPS)
+  PROCESS_TESTENTRY (process_threads_exclude_cloaked)
+#endif
   PROCESS_TESTENTRY (process_modules)
   PROCESS_TESTENTRY (process_ranges)
+  PROCESS_TESTENTRY (process_ranges_exclude_cloaked)
   PROCESS_TESTENTRY (module_imports)
   PROCESS_TESTENTRY (module_exports)
   PROCESS_TESTENTRY (module_ranges_can_be_enumerated)
@@ -46,18 +50,33 @@ TEST_LIST_BEGIN (process)
   PROCESS_TESTENTRY (darwin_module_exports)
   PROCESS_TESTENTRY (process_malloc_ranges)
 #endif
+#ifdef HAVE_LINUX
+  PROCESS_TESTENTRY (linux_process_modules)
+#endif
 TEST_LIST_END ()
 
-typedef struct _TestForEachContext {
+typedef struct _TestForEachContext TestForEachContext;
+typedef struct _TestThreadContext TestThreadContext;
+typedef struct _TestRangeContext TestRangeContext;
+
+struct _TestForEachContext
+{
   gboolean value_to_return;
   guint number_of_calls;
-} TestForEachContext;
+};
 
-typedef struct _TestRangeContext {
+struct _TestThreadContext
+{
+  GumThreadId needle;
+  gboolean found;
+};
+
+struct _TestRangeContext
+{
   GumMemoryRange range;
   gboolean found;
   gboolean found_exact;
-} TestRangeContext;
+};
 
 #ifndef G_OS_WIN32
 static gboolean store_export_address_if_tricky_module_export (
@@ -72,6 +91,8 @@ static gboolean store_export_address_if_mach_msg (
 static gpointer sleeping_dummy (gpointer data);
 static gboolean thread_found_cb (const GumThreadDetails * details,
     gpointer user_data);
+static gboolean thread_check_cb (const GumThreadDetails * details,
+    gpointer user_data);
 static gboolean module_found_cb (const GumModuleDetails * details,
     gpointer user_data);
 static gboolean import_found_cb (const GumImportDetails * details,
@@ -81,6 +102,8 @@ static gboolean export_found_cb (const GumExportDetails * details,
 static gboolean range_found_cb (const GumRangeDetails * details,
     gpointer user_data);
 static gboolean range_check_cb (const GumRangeDetails * details,
+    gpointer user_data);
+static gboolean store_first_range (const GumRangeDetails * details,
     gpointer user_data);
 #ifdef HAVE_DARWIN
 static gboolean malloc_range_found_cb (
@@ -121,6 +144,30 @@ PROCESS_TESTCASE (process_threads)
   g_thread_join (thread_a);
 }
 
+PROCESS_TESTCASE (process_threads_exclude_cloaked)
+{
+  TestThreadContext ctx;
+
+  if (RUNNING_ON_VALGRIND)
+  {
+    g_print ("<skipping, not compatible with Valgrind> ");
+    return;
+  }
+
+  ctx.needle = gum_process_get_current_thread_id ();
+  ctx.found = FALSE;
+  gum_process_enumerate_threads (thread_check_cb, &ctx);
+  g_assert (ctx.found);
+
+  gum_cloak_add_thread (ctx.needle);
+
+  ctx.found = FALSE;
+  gum_process_enumerate_threads (thread_check_cb, &ctx);
+  g_assert (!ctx.found);
+
+  gum_cloak_remove_thread (ctx.needle);
+}
+
 PROCESS_TESTCASE (process_modules)
 {
   TestForEachContext ctx;
@@ -135,6 +182,85 @@ PROCESS_TESTCASE (process_modules)
   gum_process_enumerate_modules (module_found_cb, &ctx);
   g_assert_cmpuint (ctx.number_of_calls, ==, 1);
 }
+
+#ifdef HAVE_LINUX
+
+typedef struct _ModuleBounds ModuleBounds;
+
+struct _ModuleBounds
+{
+  const gchar * name;
+  GumAddress start;
+  GumAddress end;
+};
+
+static gboolean find_module_bounds (const GumRangeDetails * details,
+    gpointer user_data);
+static gboolean verify_module_bounds (const GumModuleDetails * details,
+    gpointer user_data);
+
+PROCESS_TESTCASE (linux_process_modules)
+{
+  ModuleBounds bounds;
+
+  bounds.name = SYSTEM_MODULE_NAME;
+  bounds.start = 0;
+  bounds.end = 0;
+
+  gum_process_enumerate_ranges (GUM_PAGE_NO_ACCESS, find_module_bounds,
+      &bounds);
+
+  g_assert (bounds.start != 0);
+  g_assert (bounds.end != 0);
+
+  gum_process_enumerate_modules (verify_module_bounds, &bounds);
+}
+
+static gboolean
+find_module_bounds (const GumRangeDetails * details,
+                    gpointer user_data)
+{
+  ModuleBounds * bounds = user_data;
+  const GumMemoryRange * range = details->range;
+  const GumFileMapping * file = details->file;
+  gchar * name;
+  gboolean is_match;
+
+  if (file == NULL)
+    return TRUE;
+
+  name = g_path_get_basename (file->path);
+  is_match = strcmp (name, bounds->name) == 0;
+  g_free (name);
+
+  if (!is_match)
+    return TRUE;
+
+  if (bounds->start == 0)
+    bounds->start = range->base_address;
+
+  bounds->end = range->base_address + range->size;
+
+  return TRUE;
+}
+
+static gboolean
+verify_module_bounds (const GumModuleDetails * details,
+                      gpointer user_data)
+{
+  ModuleBounds * bounds = user_data;
+  const GumMemoryRange * range = details->range;
+
+  if (strcmp (details->name, bounds->name) != 0)
+    return TRUE;
+
+  g_assert_cmphex (range->base_address, ==, bounds->start);
+  g_assert_cmphex (range->base_address + range->size, ==, bounds->end);
+
+  return TRUE;
+}
+
+#endif
 
 PROCESS_TESTCASE (process_ranges)
 {
@@ -185,6 +311,33 @@ PROCESS_TESTCASE (process_ranges)
     gum_process_enumerate_ranges (GUM_PAGE_RW, range_check_cb, &ctx);
     g_assert (ctx.found);
   }
+}
+
+PROCESS_TESTCASE (process_ranges_exclude_cloaked)
+{
+  GumMemoryRange first = { 0, };
+  GumMemoryRange range = { 0, };
+  gpointer block;
+  TestRangeContext ctx;
+
+  gum_process_enumerate_ranges (GUM_PAGE_RX, store_first_range, &first);
+
+  gum_cloak_add_range (&first);
+  gum_process_enumerate_ranges (GUM_PAGE_RX, store_first_range, &range);
+  g_assert_cmphex (range.base_address, !=, first.base_address);
+
+  gum_cloak_remove_range (&first);
+  gum_process_enumerate_ranges (GUM_PAGE_RX, store_first_range, &range);
+  g_assert_cmphex (range.base_address, ==, first.base_address);
+
+  block = gum_malloc (1);
+  ctx.range.base_address = GUM_ADDRESS (block);
+  ctx.range.size = 1;
+  ctx.found = FALSE;
+  ctx.found_exact = FALSE;
+  gum_process_enumerate_ranges (GUM_PAGE_RW, range_check_cb, &ctx);
+  gum_free (block);
+  g_assert (!ctx.found);
 }
 
 #ifdef HAVE_DARWIN
@@ -493,6 +646,18 @@ thread_found_cb (const GumThreadDetails * details,
 }
 
 static gboolean
+thread_check_cb (const GumThreadDetails * details,
+                 gpointer user_data)
+{
+  TestThreadContext * ctx = (TestThreadContext *) user_data;
+
+  if (details->id == ctx->needle)
+    ctx->found = TRUE;
+
+  return !ctx->found;
+}
+
+static gboolean
 module_found_cb (const GumModuleDetails * details,
                  gpointer user_data)
 {
@@ -573,6 +738,17 @@ range_check_cb (const GumRangeDetails * details,
   }
 
   return TRUE;
+}
+
+static gboolean
+store_first_range (const GumRangeDetails * details,
+                   gpointer user_data)
+{
+  GumMemoryRange * range = user_data;
+
+  memcpy (range, details->range, sizeof (GumMemoryRange));
+
+  return FALSE;
 }
 
 #ifdef HAVE_DARWIN

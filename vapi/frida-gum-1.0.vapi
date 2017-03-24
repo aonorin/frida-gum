@@ -1,7 +1,11 @@
 [CCode (cheader_filename = "gum/gum.h")]
 namespace Gum {
 	public void init ();
+	public void shutdown ();
 	public void deinit ();
+
+	public void init_embedded ();
+	public void deinit_embedded ();
 
 	[CCode (cprefix = "GUM_CALL_")]
 	public enum CallingConvention {
@@ -17,16 +21,6 @@ namespace Gum {
 		ARM64,
 		MIPS,
 	}
-
-	[Compact]
-	public class Closure {
-		public Closure (Gum.CallingConvention conv, Gum.ClosureTarget target, GLib.Variant args);
-
-		public void invoke ();
-	}
-
-	[CCode (has_target = false)]
-	public delegate void ClosureTarget ();
 
 	public class Interceptor : GLib.Object {
 		public static Interceptor obtain ();
@@ -152,6 +146,10 @@ namespace Gum {
 		public delegate bool FoundModuleFunc (Gum.ModuleDetails details);
 	}
 
+	namespace Thread {
+		public bool try_get_range (out Gum.MemoryRange range);
+	}
+
 	namespace Module {
 		public void enumerate_imports (string module_name, Gum.Module.FoundImportFunc func);
 		public void enumerate_exports (string module_name, Gum.Module.FoundExportFunc func);
@@ -169,6 +167,16 @@ namespace Gum {
 		public void scan (Gum.MemoryRange range, Gum.MatchPattern pattern, Gum.Memory.ScanMatchFunc func);
 
 		public delegate bool ScanMatchFunc (Address address, size_t size);
+	}
+
+	namespace Cloak {
+		public void add_thread (Gum.ThreadId id);
+		public void remove_thread (Gum.ThreadId id);
+		public bool has_thread (Gum.ThreadId id);
+
+		public void add_range (Gum.MemoryRange range);
+		public void remove_range (Gum.MemoryRange range);
+		public GLib.Array<Gum.MemoryRange>? clip_range (Gum.MemoryRange range);
 	}
 
 	public delegate bool FoundRangeFunc (Gum.RangeDetails details);
@@ -261,6 +269,10 @@ namespace Gum {
 		EXECUTE   = (1 << 2)
 	}
 
+	public class Exceptor : GLib.Object {
+		public static Exceptor obtain ();
+	}
+
 	[CCode (cheader_filename = "gum/gum-heap.h")]
 	public class InstanceTracker : GLib.Object {
 		public InstanceTracker ();
@@ -275,16 +287,14 @@ namespace Gum {
 
 	public delegate void WalkInstanceFunc (Gum.InstanceDetails id);
 
-	public struct InstanceVTable
-	{
+	public struct InstanceVTable {
 		void * create_instance;
 		void * free_instance;
 
 		void * type_id_to_name;
 	}
 
-	public struct InstanceDetails
-	{
+	public struct InstanceDetails {
 		public void * address;
 		public uint ref_count;
 		public string type_name;

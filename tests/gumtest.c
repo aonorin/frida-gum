@@ -101,10 +101,8 @@ main (gint argc, gchar * argv[])
   g_setenv ("G_SLICE", "always-malloc", TRUE);
 #endif
   g_setenv ("G_DEBUG", "fatal-warnings:fatal-criticals", TRUE);
-#if GLIB_CHECK_VERSION (2, 46, 0)
   glib_init ();
   gio_init ();
-#endif
   g_test_init (&argc, &argv, NULL);
   gum_init ();
 
@@ -141,6 +139,7 @@ main (gint argc, gchar * argv[])
   /* Core */
   TEST_RUN_LIST (testutil);
   TEST_RUN_LIST (tls);
+  TEST_RUN_LIST (cloak);
   TEST_RUN_LIST (memory);
   TEST_RUN_LIST (process);
 #if !defined (HAVE_QNX) && !(defined (HAVE_ANDROID) && defined (HAVE_ARM64))
@@ -162,10 +161,16 @@ main (gint argc, gchar * argv[])
 #ifdef HAVE_DARWIN
   TEST_RUN_LIST (interceptor_darwin);
 #endif
+#ifdef HAVE_ANDROID
+  TEST_RUN_LIST (interceptor_android);
+#endif
+#ifdef HAVE_DARWIN
+  TEST_RUN_LIST (exceptor_darwin);
+#endif
 #if defined (HAVE_I386) && defined (G_OS_WIN32)
   TEST_RUN_LIST (memoryaccessmonitor);
 #endif
-#ifdef HAVE_I386
+#if defined HAVE_I386 || (defined (HAVE_ARM64) && !defined (HAVE_IOS))
   TEST_RUN_LIST (stalker);
 #endif
 #ifdef HAVE_MAC
@@ -240,14 +245,10 @@ main (gint argc, gchar * argv[])
     TEST_RUN_LIST_WITH_DATA (script_darwin, gum_script_backend_obtain_duk ());
 # endif
 
-# ifdef HAVE_ANDROID
-#  ifdef HAVE_V8
-    TEST_RUN_LIST_WITH_DATA (script_android, v8_backend);
-#  endif
-# endif
-
+# ifndef HAVE_ASAN
     if (gum_kernel_api_is_available ())
       TEST_RUN_LIST (kscript);
+# endif
   }
 #endif
 
@@ -277,10 +278,9 @@ main (gint argc, gchar * argv[])
       g_main_context_iteration (context, FALSE);
   }
 
-# if GLIB_CHECK_VERSION (2, 46, 0)
+  gum_shutdown ();
   gio_shutdown ();
   glib_shutdown ();
-# endif
 
   _test_util_deinit ();
 
@@ -289,10 +289,8 @@ main (gint argc, gchar * argv[])
 # endif
 
   gum_deinit ();
-# if GLIB_CHECK_VERSION (2, 46, 0)
   gio_deinit ();
   glib_deinit ();
-# endif
   gum_memory_deinit ();
 
 # ifdef G_OS_WIN32

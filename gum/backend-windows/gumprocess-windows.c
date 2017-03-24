@@ -1,10 +1,10 @@
 /*
- * Copyright (C) 2009-2015 Ole André Vadla Ravnås <oleavr@nowsecure.com>
+ * Copyright (C) 2009-2017 Ole André Vadla Ravnås <oleavr@nowsecure.com>
  *
  * Licence: wxWindows Library Licence, Version 3.1
  */
 
-#include "gumprocess.h"
+#include "gumprocess-priv.h"
 
 #include "gumwindows.h"
 
@@ -102,8 +102,8 @@ beach:
 }
 
 void
-gum_process_enumerate_threads (GumFoundThreadFunc func,
-                               gpointer user_data)
+_gum_process_enumerate_threads (GumFoundThreadFunc func,
+                                gpointer user_data)
 {
   DWORD this_process_id;
   HANDLE snapshot;
@@ -261,9 +261,9 @@ beach:
 }
 
 void
-gum_process_enumerate_ranges (GumPageProtection prot,
-                              GumFoundRangeFunc func,
-                              gpointer user_data)
+_gum_process_enumerate_ranges (GumPageProtection prot,
+                               GumFoundRangeFunc func,
+                               gpointer user_data)
 {
   guint8 * cur_base_address;
 
@@ -312,6 +312,16 @@ gum_process_enumerate_malloc_ranges (GumFoundMallocRangeFunc func,
   /* Not implemented */
   (void) func;
   (void) user_data;
+}
+
+gboolean
+gum_thread_try_get_range (GumMemoryRange * range)
+{
+  /* Not implemented */
+  range->base_address = 0;
+  range->size = 0;
+
+  return FALSE;
 }
 
 #if defined (HAVE_I386) && GLIB_SIZEOF_VOID_P == 4

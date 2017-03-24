@@ -1,13 +1,15 @@
 /*
- * Copyright (C) 2010-2015 Ole André Vadla Ravnås <ole.andre.ravnas@tillitech.com>
+ * Copyright (C) 2010-2017 Ole André Vadla Ravnås <oleavr@nowsecure.com>
  * Copyright (C) 2013 Karl Trygve Kalleberg <karltk@boblycat.org>
  *
  * Licence: wxWindows Library Licence, Version 3.1
  */
 
+#include "testutil.h"
+
+#include "gum-init.h"
 #include "gumdukscriptbackend.h"
 #include "gumscriptbackend.h"
-#include "testutil.h"
 #include "valgrind.h"
 
 #include <stdio.h>
@@ -34,7 +36,7 @@
 #endif
 
 #define ANY_LINE_NUMBER -1
-#define SCRIPT_MESSAGE_TIMEOUT_MSEC 500
+#define SCRIPT_MESSAGE_DEFAULT_TIMEOUT_MSEC 500
 
 #ifndef SCRIPT_SUITE
 # define SCRIPT_SUITE ""
@@ -71,7 +73,7 @@
     g_object_unref (fixture->script); \
     fixture->script = NULL;
 #define POST_MESSAGE(MSG) \
-    gum_script_post_message (fixture->script, MSG)
+    gum_script_post (fixture->script, MSG, NULL)
 #define EXPECT_NO_MESSAGES() \
     g_assert (test_script_fixture_try_pop_message (fixture, 1) == NULL)
 #define EXPECT_SEND_MESSAGE_WITH(PAYLOAD, ...) \
@@ -115,6 +117,7 @@ typedef struct _TestScriptFixture
   GMainLoop * loop;
   GMainContext * context;
   GQueue * messages;
+  guint timeout;
 } TestScriptFixture;
 
 typedef struct _TestScriptMessageItem
@@ -134,6 +137,15 @@ static void test_script_fixture_expect_send_message_with_payload_and_data (
 static void test_script_fixture_expect_error_message_with (
     TestScriptFixture * fixture, gint line_number, const gchar * description);
 
+static GumExceptor * exceptor = NULL;
+
+static void
+test_script_fixture_deinit (void)
+{
+  g_object_unref (exceptor);
+  exceptor = NULL;
+}
+
 static void
 test_script_fixture_setup (TestScriptFixture * fixture,
                            gconstpointer data)
@@ -146,6 +158,13 @@ test_script_fixture_setup (TestScriptFixture * fixture,
   fixture->context = g_main_context_ref_thread_default ();
   fixture->loop = g_main_loop_new (fixture->context, FALSE);
   fixture->messages = g_queue_new ();
+  fixture->timeout = SCRIPT_MESSAGE_DEFAULT_TIMEOUT_MSEC;
+
+  if (exceptor == NULL)
+  {
+    exceptor = gum_exceptor_obtain ();
+    _gum_register_destructor (test_script_fixture_deinit);
+  }
 }
 
 static void
@@ -293,8 +312,7 @@ test_script_fixture_pop_message (TestScriptFixture * fixture)
 {
   TestScriptMessageItem * item;
 
-  item = test_script_fixture_try_pop_message (fixture,
-      SCRIPT_MESSAGE_TIMEOUT_MSEC);
+  item = test_script_fixture_try_pop_message (fixture, fixture->timeout);
   g_assert (item != NULL);
 
   return item;
@@ -381,8 +399,8 @@ test_script_fixture_expect_error_message_with (TestScriptFixture * fixture,
                                                const gchar * description)
 {
   TestScriptMessageItem * item;
-  gchar actual_description[256];
-  gchar actual_stack[512];
+  gchar actual_description[1024];
+  gchar actual_stack[1024];
   gchar actual_file_name[64];
   gint actual_line_number;
   gint actual_column_number;

@@ -9,12 +9,6 @@
 #include "gumdukmacros.h"
 #include "gumdukscript-priv.h"
 
-#ifdef G_OS_WIN32
-# define GUM_SYSTEM_ERROR_FIELD "lastError"
-#else
-# define GUM_SYSTEM_ERROR_FIELD "errno"
-#endif
-
 #define GUM_DUK_INVOCATION_LISTENER_CAST(obj) \
     ((GumDukInvocationListener *) (obj))
 #define GUM_DUK_TYPE_CALL_LISTENER (gum_duk_call_listener_get_type ())
@@ -25,6 +19,7 @@ typedef struct _GumDukCallListener GumDukCallListener;
 typedef struct _GumDukCallListenerClass GumDukCallListenerClass;
 typedef struct _GumDukProbeListener GumDukProbeListener;
 typedef struct _GumDukProbeListenerClass GumDukProbeListenerClass;
+typedef struct _GumDukInvocationState GumDukInvocationState;
 typedef struct _GumDukReplaceEntry GumDukReplaceEntry;
 
 struct _GumDukInvocationListener
@@ -58,6 +53,11 @@ struct _GumDukProbeListenerClass
   GObjectClass parent_class;
 };
 
+struct _GumDukInvocationState
+{
+  GumDukInvocationContext * jic;
+};
+
 struct _GumDukInvocationArgs
 {
   GumDukHeapPtr object;
@@ -84,7 +84,8 @@ struct _GumDukReplaceEntry
   GumDukCore * core;
 };
 
-static gboolean gum_duk_interceptor_on_flush_timer_tick (gpointer user_data);
+static gboolean gum_duk_interceptor_on_flush_timer_tick (
+    GumDukInterceptor * self);
 
 GUMJS_DECLARE_CONSTRUCTOR (gumjs_interceptor_construct)
 GUMJS_DECLARE_FUNCTION (gumjs_interceptor_attach)
@@ -96,6 +97,7 @@ GUMJS_DECLARE_FUNCTION (gumjs_interceptor_detach_all)
 GUMJS_DECLARE_FUNCTION (gumjs_interceptor_replace)
 static void gum_duk_replace_entry_free (GumDukReplaceEntry * entry);
 GUMJS_DECLARE_FUNCTION (gumjs_interceptor_revert)
+GUMJS_DECLARE_FUNCTION (gumjs_interceptor_flush)
 
 GUMJS_DECLARE_CONSTRUCTOR (gumjs_invocation_listener_construct)
 GUMJS_DECLARE_FUNCTION (gumjs_invocation_listener_detach)
@@ -168,6 +170,7 @@ static const duk_function_list_entry gumjs_interceptor_functions[] =
   { "detachAll", gumjs_interceptor_detach_all, 0 },
   { "_replace", gumjs_interceptor_replace, 2 },
   { "revert", gumjs_interceptor_revert, 1 },
+  { "flush", gumjs_interceptor_flush, 0 },
 
   { NULL, NULL, 0 }
 };
@@ -192,7 +195,7 @@ static const GumDukPropertyEntry gumjs_invocation_context_values[] =
     NULL
   },
   {
-    GUM_SYSTEM_ERROR_FIELD,
+    GUMJS_SYSTEM_ERROR_FIELD,
     gumjs_invocation_context_get_system_error,
     gumjs_invocation_context_set_system_error
   },
@@ -313,8 +316,8 @@ _gum_duk_interceptor_flush (GumDukInterceptor * self)
     GSource * source;
 
     source = g_timeout_source_new (10);
-    g_source_set_callback (source, gum_duk_interceptor_on_flush_timer_tick,
-        self, NULL);
+    g_source_set_callback (source,
+        (GSourceFunc) gum_duk_interceptor_on_flush_timer_tick, self, NULL);
     self->flush_timer = source;
 
     _gum_duk_core_pin (core);
@@ -329,9 +332,8 @@ _gum_duk_interceptor_flush (GumDukInterceptor * self)
 }
 
 static gboolean
-gum_duk_interceptor_on_flush_timer_tick (gpointer user_data)
+gum_duk_interceptor_on_flush_timer_tick (GumDukInterceptor * self)
 {
-  GumDukInterceptor * self = user_data;
   gboolean flushed;
 
   flushed = gum_interceptor_flush (self->interceptor);
@@ -576,6 +578,20 @@ GUMJS_DEFINE_FUNCTION (gumjs_interceptor_revert)
   return 0;
 }
 
+GUMJS_DEFINE_FUNCTION (gumjs_interceptor_flush)
+{
+  GumDukInterceptor * self;
+
+  (void) ctx;
+
+  self = gumjs_interceptor_from_args (args);
+
+  gum_interceptor_end_transaction (self->interceptor);
+  gum_interceptor_begin_transaction (self->interceptor);
+
+  return 0;
+}
+
 GUMJS_DEFINE_CONSTRUCTOR (gumjs_invocation_listener_construct)
 {
   (void) ctx;
@@ -617,10 +633,9 @@ gum_duk_invocation_listener_on_enter (GumInvocationListener * listener,
                                       GumInvocationContext * ic)
 {
   GumDukInvocationListener * self = GUM_DUK_INVOCATION_LISTENER_CAST (listener);
+  GumDukInvocationState * state;
 
-  if (gum_script_backend_is_ignoring (
-      gum_invocation_context_get_thread_id (ic)))
-    return;
+  state = GUM_LINCTX_GET_FUNC_INVDATA (ic, GumDukInvocationState);
 
   if (self->on_enter != NULL)
   {
@@ -651,7 +666,7 @@ gum_duk_invocation_listener_on_enter (GumInvocationListener * listener,
     _gum_duk_invocation_context_reset (jic, NULL);
     if (self->on_leave != NULL)
     {
-      *GUM_LINCTX_GET_FUNC_INVDATA (ic, GumDukHeapPtr) = jic;
+      state->jic = jic;
     }
     else
     {
@@ -667,12 +682,13 @@ gum_duk_invocation_listener_on_leave (GumInvocationListener * listener,
                                       GumInvocationContext * ic)
 {
   GumDukInvocationListener * self = GUM_DUK_INVOCATION_LISTENER_CAST (listener);
+  GumDukInvocationState * state;
 
-  if (gum_script_backend_is_ignoring (
-      gum_invocation_context_get_thread_id (ic)))
+  if (self->on_leave == NULL)
     return;
 
-  if (self->on_leave != NULL)
+  state = GUM_LINCTX_GET_FUNC_INVDATA (ic, GumDukInvocationState);
+
   {
     GumDukInterceptor * module = self->module;
     GumDukCore * core = module->core;
@@ -683,9 +699,7 @@ gum_duk_invocation_listener_on_leave (GumInvocationListener * listener,
 
     ctx = _gum_duk_scope_enter (&scope, core);
 
-    jic = (self->on_enter != NULL)
-        ? *GUM_LINCTX_GET_FUNC_INVDATA (ic, GumDukInvocationContext *)
-        : NULL;
+    jic = (self->on_enter != NULL) ? state->jic : NULL;
     if (jic == NULL)
     {
       jic = _gum_duk_interceptor_obtain_invocation_context (module);
@@ -956,7 +970,7 @@ GUMJS_DEFINE_SETTER (gumjs_invocation_context_set_property)
   (void) args;
 
   self = _gum_duk_require_data (ctx, 0);
-  receiver = _gum_duk_require_heapptr (ctx, 3);
+  receiver = duk_require_heapptr (ctx, 3);
   interceptor = self->interceptor;
 
   duk_dup (ctx, 1);

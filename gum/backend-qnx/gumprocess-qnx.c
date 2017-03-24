@@ -2,7 +2,7 @@
  * Licence: wxWindows Library Licence, Version 3.1
  */
 
-#include "gumprocess.h"
+#include "gumprocess-priv.h"
 
 #include "gumqnx.h"
 #include "gumqnx-priv.h"
@@ -154,8 +154,8 @@ gum_process_modify_thread (GumThreadId thread_id,
 }
 
 void
-gum_process_enumerate_threads (GumFoundThreadFunc func,
-                               gpointer user_data)
+_gum_process_enumerate_threads (GumFoundThreadFunc func,
+                                gpointer user_data)
 {
   gint fd, res;
   debug_process_t info;
@@ -259,9 +259,9 @@ gum_qnx_enumerate_ranges (pid_t pid,
 }
 
 void
-gum_process_enumerate_ranges (GumPageProtection prot,
-                              GumFoundRangeFunc func,
-                              gpointer user_data)
+_gum_process_enumerate_ranges (GumPageProtection prot,
+                               GumFoundRangeFunc func,
+                               gpointer user_data)
 {
   gum_qnx_enumerate_ranges (getpid (), prot, func, user_data);
 }
@@ -272,6 +272,16 @@ gum_process_enumerate_malloc_ranges (GumFoundMallocRangeFunc func,
 {
   /* Not implemented */
   g_assert_not_reached ();
+}
+
+gboolean
+gum_thread_try_get_range (GumMemoryRange * range)
+{
+  /* Not implemented */
+  range->base_address = 0;
+  range->size = 0;
+
+  return FALSE;
 }
 
 gint

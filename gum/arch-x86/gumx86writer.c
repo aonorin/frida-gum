@@ -604,6 +604,12 @@ gum_x86_writer_put_call_near_label (GumX86Writer * self,
 }
 
 void
+gum_x86_writer_put_leave (GumX86Writer * self)
+{
+  gum_x86_writer_put_u8 (self, 0xc9);
+}
+
+void
 gum_x86_writer_put_ret (GumX86Writer * self)
 {
   gum_x86_writer_put_u8 (self, 0xc3);
@@ -2181,6 +2187,14 @@ gum_x86_writer_put_padding (GumX86Writer * self,
                             guint n)
 {
   gum_memset (self->code, 0xcc, n);
+  gum_x86_writer_commit (self, n);
+}
+
+void
+gum_x86_writer_put_nop_padding (GumX86Writer * self,
+                                guint n)
+{
+  gum_memset (self->code, 0x90, n);
   gum_x86_writer_commit (self, n);
 }
 

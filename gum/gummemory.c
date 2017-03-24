@@ -1,38 +1,40 @@
 /*
- * Copyright (C) 2010 Ole André Vadla Ravnås <ole.andre.ravnas@tillitech.com>
+ * Copyright (C) 2010-2017 Ole André Vadla Ravnås <oleavr@nowsecure.com>
  *
  * Licence: wxWindows Library Licence, Version 3.1
  */
 
 #include "gummemory.h"
 
+#include "gumcloak-priv.h"
+#include "gumcodesegment.h"
 #include "gumlibc.h"
 #include "gummemory-priv.h"
 
 #include <string.h>
 
-#ifdef G_OS_UNIX
-# include <unistd.h>
-# define __USE_GNU     1
-# include <sys/mman.h>
-# undef __USE_GNU
-#endif
 #ifdef HAVE_IOS
 # include "backend-darwin/gumdarwin.h"
 # include <mach/mach.h>
 #endif
 #ifdef HAVE_DARWIN
-# define DARWIN       1
+# define DARWIN                   1
 #endif
-#define MSPACES       1
-#define ONLY_MSPACES  1
-#define USE_LOCKS     1
-#define FOOTERS       0
-#define INSECURE      1
-#define NO_MALLINFO   0
+#define MSPACES                   1
+#define ONLY_MSPACES              1
+#define USE_LOCKS                 1
+#define FOOTERS                   0
+#define INSECURE                  1
+#define NO_MALLINFO               0
+#ifdef HAVE_LIBC_MALLINFO
+# define STRUCT_MALLINFO_DECLARED 1
+#endif
 #ifdef _MSC_VER
 # pragma warning (push)
 # pragma warning (disable: 4267 4702)
+#endif
+#ifdef _GNU_SOURCE
+# undef _GNU_SOURCE
 #endif
 #include "dlmalloc.c"
 #ifdef _MSC_VER
@@ -53,6 +55,7 @@ static GumMatchToken * gum_match_token_new (GumMatchType type);
 static void gum_match_token_free (GumMatchToken * token);
 static void gum_match_token_append (GumMatchToken * self, guint8 byte);
 
+static gboolean gum_memory_initialized = FALSE;
 static mspace gum_mspace = NULL;
 static guint gum_cached_page_size;
 
@@ -67,22 +70,30 @@ gum_mspace_get (void)
 void
 gum_memory_init (void)
 {
-  gum_mspace_get ();
+  if (gum_memory_initialized)
+    return;
+  gum_memory_initialized = TRUE;
 
   gum_cached_page_size = _gum_memory_backend_query_page_size ();
+
+  _gum_cloak_init ();
+
+  gum_mspace_get ();
 }
 
 void
 gum_memory_deinit (void)
 {
-  if (gum_mspace != NULL)
-  {
-    destroy_mspace (gum_mspace);
-    gum_mspace = NULL;
+  g_assert (gum_memory_initialized);
 
-    DESTROY_MORECORE_LOCK ();
-    DESTROY_MAGIC_INIT_LOCK ();
-  }
+  destroy_mspace (gum_mspace);
+  gum_mspace = NULL;
+
+  (void) DESTROY_LOCK (&malloc_global_mutex);
+
+  _gum_cloak_deinit ();
+
+  gum_memory_initialized = FALSE;
 }
 
 guint
@@ -144,6 +155,61 @@ gum_query_is_rwx_supported (void)
 #else
   return TRUE;
 #endif
+}
+
+gboolean
+gum_memory_patch_code (GumAddress address,
+                       gsize size,
+                       GumMemoryPatchApplyFunc apply,
+                       gpointer apply_data)
+{
+  gsize page_size;
+  guint8 * start_page, * end_page;
+  gsize page_offset, range_size;
+  gboolean rwx_supported;
+
+  page_size = gum_query_page_size ();
+  start_page = GSIZE_TO_POINTER (((gsize) address) & ~(page_size - 1));
+  end_page = GSIZE_TO_POINTER (
+      ((gsize) (address + size - 1)) & ~(page_size - 1));
+  page_offset = ((guint8 *) GSIZE_TO_POINTER (address)) - start_page;
+  range_size = (end_page + page_size) - start_page;
+
+  rwx_supported = gum_query_is_rwx_supported ();
+
+  if (rwx_supported || !gum_code_segment_is_supported ())
+  {
+    GumPageProtection protection;
+
+    protection = rwx_supported ? GUM_PAGE_RWX : GUM_PAGE_RW;
+
+    if (!gum_try_mprotect (start_page, range_size, protection))
+      return FALSE;
+
+    apply (GSIZE_TO_POINTER (address), apply_data);
+
+    if (!gum_try_mprotect (start_page, range_size, GUM_PAGE_RX))
+      return FALSE;
+  }
+  else
+  {
+    GumCodeSegment * segment;
+    guint8 * scratch_page;
+
+    segment = gum_code_segment_new (range_size, NULL);
+    scratch_page = gum_code_segment_get_address (segment);
+    memcpy (scratch_page, start_page, range_size);
+
+    apply (scratch_page + page_offset, apply_data);
+
+    gum_code_segment_realize (segment);
+    gum_code_segment_map (segment, 0, range_size, start_page);
+    gum_code_segment_free (segment);
+  }
+
+  gum_clear_cache (GSIZE_TO_POINTER (address), size);
+
+  return TRUE;
 }
 
 void

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2015 Ole André Vadla Ravnås <ole.andre.ravnas@tillitech.com>
+ * Copyright (C) 2008-2017 Ole André Vadla Ravnås <oleavr@nowsecure.com>
  *
  * Licence: wxWindows Library Licence, Version 3.1
  */
@@ -11,11 +11,12 @@
 
 #include <gum/gumapiresolver.h>
 #include <gum/gumbacktracer.h>
+#include <gum/gumcloak.h>
 #include <gum/gumcodeallocator.h>
 #include <gum/gumcodesegment.h>
-#include <gum/gumexceptor.h>
 #include <gum/gumevent.h>
 #include <gum/gumeventsink.h>
+#include <gum/gumexceptor.h>
 #include <gum/gumfunction.h>
 #include <gum/guminterceptor.h>
 #include <gum/guminvocationcontext.h>
@@ -37,7 +38,11 @@
 G_BEGIN_DECLS
 
 GUM_API void gum_init (void);
+GUM_API void gum_shutdown (void);
 GUM_API void gum_deinit (void);
+
+GUM_API void gum_init_embedded (void);
+GUM_API void gum_deinit_embedded (void);
 
 G_END_DECLS
 

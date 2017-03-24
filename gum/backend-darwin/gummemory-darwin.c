@@ -44,6 +44,12 @@ gum_darwin_query_page_size (mach_port_t task,
   kern_return_t kr;
   GumCpuType cpu_type;
 
+  if (task == mach_task_self ())
+  {
+    *page_size = gum_query_page_size ();
+    return TRUE;
+  }
+
   /* FIXME: any way we can probe it without access to the task's host port? */
   kr = pid_for_task (task, &pid);
   if (kr != KERN_SUCCESS)
@@ -179,13 +185,15 @@ gum_darwin_read (mach_port_t task,
                  gsize len,
                  gsize * n_bytes_read)
 {
-  gsize page_size;
+  guint page_size;
   guint8 * result;
   gsize offset;
   mach_port_t self;
   kern_return_t kr;
 
-  page_size = gum_query_page_size ();
+  if (!gum_darwin_query_page_size (task, &page_size))
+    return NULL;
+
   if (address < page_size)
     return NULL;
 
@@ -200,7 +208,7 @@ gum_darwin_read (mach_port_t task,
     gsize chunk_size, page_offset;
 
     chunk_address = address + offset;
-    page_address = chunk_address & ~(page_size - 1);
+    page_address = chunk_address & ~(GumAddress) (page_size - 1);
     page_offset = chunk_address - page_address;
     chunk_size = MIN (len - offset, page_size - page_offset);
 
@@ -217,7 +225,7 @@ gum_darwin_read (mach_port_t task,
     vm_offset_t result_data;
     mach_msg_type_number_t result_size;
 
-    /* mach_vm_read_overwrite leaks memory on Mac OS X */
+    /* mach_vm_read_overwrite leaks memory on macOS */
     kr = mach_vm_read (task, page_address, page_size,
         &result_data, &result_size);
     if (kr != KERN_SUCCESS)
@@ -249,10 +257,12 @@ gum_darwin_write (mach_port_t task,
                   const guint8 * bytes,
                   gsize len)
 {
-  gsize page_size;
+  guint page_size;
   kern_return_t kr;
 
-  page_size = gum_query_page_size ();
+  if (!gum_darwin_query_page_size (task, &page_size))
+    return FALSE;
+
   if (address < page_size)
     return FALSE;
 
@@ -282,11 +292,12 @@ gum_mach_vm_protect (vm_map_t target_task,
   };
 
   asm volatile (
-      "ldmdb %1!, {r4, r5, r6, r7}\n\t"
-      "ldmdb %1!, {r0, r1, r2, r3}\n\t"
+      "push {r0, r1, r2, r3, r4, r5, r6, r7, r12}\n\t"
+      "ldmdb %1!, {r0, r1, r2, r3, r4, r5, r6, r7}\n\t"
       "mvn r12, 0xd\n\t"
       "svc 0x80\n\t"
       "mov %0, r0\n\t"
+      "pop {r0, r1, r2, r3, r4, r5, r6, r7, r12}\n\t"
       : "=r" (result)
       : "r" (args + G_N_ELEMENTS (args))
       : "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r12"
@@ -297,14 +308,22 @@ gum_mach_vm_protect (vm_map_t target_task,
   kern_return_t result;
 
   asm volatile (
-      "mov x4, %5\n\t"
-      "mov x3, %4\n\t"
-      "mov x2, %3\n\t"
-      "mov x1, %2\n\t"
+      "sub sp, sp, #16 * 3\n\t"
+      "stp x0, x1, [sp, #16 * 0]\n\t"
+      "stp x2, x3, [sp, #16 * 1]\n\t"
+      "stp x4, x16, [sp, #16 * 2]\n\t"
       "mov x0, %1\n\t"
+      "mov x1, %2\n\t"
+      "mov x2, %3\n\t"
+      "mov x3, %4\n\t"
+      "mov x4, %5\n\t"
       "movn x16, 0xd\n\t"
       "svc 0x80\n\t"
       "mov %w0, w0\n\t"
+      "ldp x0, x1, [sp, #16 * 0]\n\t"
+      "ldp x2, x3, [sp, #16 * 1]\n\t"
+      "ldp x4, x16, [sp, #16 * 2]\n\t"
+      "add sp, sp, #16 * 3\n\t"
       : "=r" (result)
       : "r" ((gsize) target_task),
         "r" (address),

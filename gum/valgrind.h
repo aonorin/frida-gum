@@ -711,7 +711,8 @@ typedef
                      "orr x10, x10, x10\n\t"                      \
                      "mov %0, x3"     /*result*/                  \
                      : "=r" (_zzq_result)                         \
-                     : "r" (_zzq_default), "r" (&_zzq_args[0])    \
+                     : "r" ((unsigned long long int)_zzq_default),\
+                       "r" (&_zzq_args[0])                        \
                      : "cc","memory", "x3", "x4");                \
     _zzq_result;                                                  \
   })
@@ -5596,6 +5597,7 @@ __inline
 VALGRIND_PRINTF(const char *format, ...)
 {
 #if defined(NVALGRIND)
+   (void)format;
    return 0;
 #else /* NVALGRIND */
 #if defined(_MSC_VER) || defined(__MINGW64__)
@@ -5634,6 +5636,7 @@ __inline
 VALGRIND_PRINTF_BACKTRACE(const char *format, ...)
 {
 #if defined(NVALGRIND)
+   (void)format;
    return 0;
 #else /* NVALGRIND */
 #if defined(_MSC_VER) || defined(__MINGW64__)

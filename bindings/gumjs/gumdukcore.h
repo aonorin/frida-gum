@@ -16,6 +16,12 @@
 
 #define GUM_DUK_SCOPE_INIT(C) { C, 0, (C)->current_ctx, NULL }
 
+#ifdef G_OS_WIN32
+# define GUMJS_SYSTEM_ERROR_FIELD "lastError"
+#else
+# define GUMJS_SYSTEM_ERROR_FIELD "errno"
+#endif
+
 G_BEGIN_DECLS
 
 typedef struct _GumDukCore GumDukCore;
@@ -45,6 +51,7 @@ struct _GumDukCore
 {
   GumDukScript * script;
   GumDukScriptBackend * backend;
+  const gchar * runtime_source_map;
   GumDukInterceptor * interceptor;
   GumDukMessageEmitter message_emitter;
   GumScriptScheduler * scheduler;
@@ -58,6 +65,7 @@ struct _GumDukCore
   volatile gboolean heap_thread_in_use;
   volatile GumDukFlushNotify flush_notify;
 
+  GMainLoop * event_loop;
   GMutex event_mutex;
   GCond event_cond;
   volatile guint event_count;
@@ -72,6 +80,8 @@ struct _GumDukCore
   GHashTable * weak_refs;
   guint last_weak_ref_id;
 
+  GQueue * tick_callbacks;
+
   GSList * scheduled_callbacks;
   guint last_callback_id;
 
@@ -81,7 +91,10 @@ struct _GumDukCore
   GumDukHeapPtr native_resource;
   GumDukHeapPtr native_function;
   GumDukHeapPtr native_function_prototype;
+  GumDukHeapPtr system_function;
+  GumDukHeapPtr system_function_prototype;
   GumDukHeapPtr cpu_context;
+  GumDukHeapPtr source_map;
 
   GumDukNativePointerImpl * cached_native_pointers;
 };
@@ -141,9 +154,9 @@ struct _GumDukNativeResource
 };
 
 G_GNUC_INTERNAL void _gum_duk_core_init (GumDukCore * self,
-    GumDukScript * script, GumDukInterceptor * interceptor,
-    GumDukMessageEmitter message_emitter, GumScriptScheduler * scheduler,
-    duk_context * ctx);
+    GumDukScript * script, const gchar * runtime_source_map,
+    GumDukInterceptor * interceptor, GumDukMessageEmitter message_emitter,
+    GumScriptScheduler * scheduler, duk_context * ctx);
 G_GNUC_INTERNAL gboolean _gum_duk_core_flush (GumDukCore * self,
     GumDukFlushNotify flush_notify);
 G_GNUC_INTERNAL void _gum_duk_core_dispose (GumDukCore * self);
@@ -152,8 +165,8 @@ G_GNUC_INTERNAL void _gum_duk_core_finalize (GumDukCore * self);
 G_GNUC_INTERNAL void _gum_duk_core_pin (GumDukCore * self);
 G_GNUC_INTERNAL void _gum_duk_core_unpin (GumDukCore * self);
 
-G_GNUC_INTERNAL void _gum_duk_core_post_message (GumDukCore * self,
-    const gchar * message);
+G_GNUC_INTERNAL void _gum_duk_core_post (GumDukCore * self,
+    const gchar * message, GBytes * data);
 
 G_GNUC_INTERNAL void _gum_duk_core_push_job (GumDukCore * self,
     GumScriptJobFunc job_func, gpointer data, GDestroyNotify data_destroy);

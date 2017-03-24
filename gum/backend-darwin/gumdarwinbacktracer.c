@@ -1,10 +1,12 @@
 /*
- * Copyright (C) 2015 Ole André Vadla Ravnås <ole.andre.ravnas@tillitech.com>
+ * Copyright (C) 2015-2017 Ole André Vadla Ravnås <oleavr@nowsecure.com>
  *
  * Licence: wxWindows Library Licence, Version 3.1
  */
 
 #include "gumdarwinbacktracer.h"
+
+#include "guminterceptor.h"
 
 #define GUM_FP_LINK_OFFSET 1
 #if defined (HAVE_I386) && GLIB_SIZEOF_VOID_P == 4
@@ -61,7 +63,8 @@ gum_darwin_backtracer_generate (GumBacktracer * backtracer,
   pthread_t thread;
   gpointer stack_top, stack_bottom;
   gpointer * cur;
-  guint i;
+  guint start_index, i;
+  GumInvocationStack * invocation_stack;
 
   thread = pthread_self ();
   stack_top = pthread_get_stackaddr_np (thread);
@@ -72,21 +75,31 @@ gum_darwin_backtracer_generate (GumBacktracer * backtracer,
   {
 #if defined (HAVE_I386)
     cur = GSIZE_TO_POINTER (GUM_CPU_CONTEXT_XBP (cpu_context));
+
+    return_addresses->items[0] =
+        GSIZE_TO_POINTER (GUM_CPU_CONTEXT_XIP (cpu_context));
 #elif defined (HAVE_ARM)
     cur = GSIZE_TO_POINTER (cpu_context->r[7]);
+
+    return_addresses->items[0] = GSIZE_TO_POINTER (cpu_context->pc);
 #elif defined (HAVE_ARM64)
     cur = GSIZE_TO_POINTER (cpu_context->fp);
+
+    return_addresses->items[0] = GSIZE_TO_POINTER (cpu_context->pc);
 #else
 # error Unsupported architecture
 #endif
+    start_index = 1;
   }
   else
   {
     cur = __builtin_frame_address (0);
+
+    start_index = 0;
   }
 
-  for (i = 0;
-      i != G_N_ELEMENTS (return_addresses->items) &&
+  for (i = start_index;
+      i < G_N_ELEMENTS (return_addresses->items) &&
       cur >= (gpointer *) stack_bottom &&
       cur <= (gpointer *) stack_top &&
       GUM_FP_IS_ALIGNED (cur);
@@ -101,7 +114,13 @@ gum_darwin_backtracer_generate (GumBacktracer * backtracer,
       break;
     cur = next;
   }
-
   return_addresses->len = i;
+
+  invocation_stack = gum_interceptor_get_current_stack ();
+  for (i = 0; i != return_addresses->len; i++)
+  {
+    return_addresses->items[i] = gum_invocation_stack_translate (
+        invocation_stack, return_addresses->items[i]);
+  }
 }
 

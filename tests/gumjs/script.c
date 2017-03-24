@@ -13,14 +13,20 @@ TEST_LIST_BEGIN (script)
   SCRIPT_TESTENTRY (message_can_be_sent)
   SCRIPT_TESTENTRY (message_can_be_sent_with_data)
   SCRIPT_TESTENTRY (message_can_be_received)
+  SCRIPT_TESTENTRY (message_can_be_received_with_data)
   SCRIPT_TESTENTRY (recv_may_specify_desired_message_type)
-  SCRIPT_TESTENTRY (recv_can_be_waited_for)
+  SCRIPT_TESTENTRY (recv_can_be_waited_for_from_an_application_thread)
+  SCRIPT_TESTENTRY (recv_can_be_waited_for_from_our_js_thread)
   SCRIPT_TESTENTRY (rpc_can_be_performed)
   SCRIPT_TESTENTRY (thread_can_be_forced_to_sleep)
   SCRIPT_TESTENTRY (timeout_can_be_scheduled)
   SCRIPT_TESTENTRY (timeout_can_be_cancelled)
   SCRIPT_TESTENTRY (interval_can_be_scheduled)
   SCRIPT_TESTENTRY (interval_can_be_cancelled)
+  SCRIPT_TESTENTRY (callback_can_be_scheduled)
+  SCRIPT_TESTENTRY (callback_can_be_scheduled_from_a_scheduled_callback)
+  SCRIPT_TESTENTRY (callback_can_be_cancelled)
+  SCRIPT_TESTENTRY (callback_can_be_scheduled_on_next_tick)
   SCRIPT_TESTENTRY (argument_can_be_read)
   SCRIPT_TESTENTRY (argument_can_be_replaced)
   SCRIPT_TESTENTRY (return_value_can_be_read)
@@ -28,8 +34,10 @@ TEST_LIST_BEGIN (script)
   SCRIPT_TESTENTRY (return_address_can_be_read)
   SCRIPT_TESTENTRY (register_can_be_read)
   SCRIPT_TESTENTRY (register_can_be_written)
-  SCRIPT_TESTENTRY (system_error_can_be_read)
-  SCRIPT_TESTENTRY (system_error_can_be_replaced)
+  SCRIPT_TESTENTRY (system_error_can_be_read_from_interceptor_listener)
+  SCRIPT_TESTENTRY (system_error_can_be_read_from_replacement_function)
+  SCRIPT_TESTENTRY (system_error_can_be_replaced_from_interceptor_listener)
+  SCRIPT_TESTENTRY (system_error_can_be_replaced_from_replacement_function)
   SCRIPT_TESTENTRY (invocations_are_bound_on_tls_object)
   SCRIPT_TESTENTRY (invocations_provide_thread_id)
   SCRIPT_TESTENTRY (invocations_provide_call_depth)
@@ -41,18 +49,21 @@ TEST_LIST_BEGIN (script)
   SCRIPT_TESTENTRY (listener_can_be_detached_by_destruction_mid_call)
   SCRIPT_TESTENTRY (all_listeners_can_be_detached)
   SCRIPT_TESTENTRY (function_can_be_replaced)
+  SCRIPT_TESTENTRY (function_can_be_replaced_and_called_immediately)
   SCRIPT_TESTENTRY (function_can_be_reverted)
   SCRIPT_TESTENTRY (replaced_function_should_have_invocation_context)
   SCRIPT_TESTENTRY (instructions_can_be_probed)
   SCRIPT_TESTENTRY (interceptor_handles_invalid_arguments)
   SCRIPT_TESTENTRY (interceptor_on_enter_performance)
   SCRIPT_TESTENTRY (interceptor_on_leave_performance)
+  SCRIPT_TESTENTRY (interceptor_on_enter_and_leave_performance)
   SCRIPT_TESTENTRY (pointer_can_be_read)
   SCRIPT_TESTENTRY (pointer_can_be_written)
   SCRIPT_TESTENTRY (memory_can_be_allocated)
   SCRIPT_TESTENTRY (memory_can_be_copied)
   SCRIPT_TESTENTRY (memory_can_be_duped)
   SCRIPT_TESTENTRY (memory_can_be_protected)
+  SCRIPT_TESTENTRY (code_can_be_patched)
   SCRIPT_TESTENTRY (s8_can_be_read)
   SCRIPT_TESTENTRY (s8_can_be_written)
   SCRIPT_TESTENTRY (u8_can_be_read)
@@ -101,6 +112,7 @@ TEST_LIST_BEGIN (script)
 #endif
   SCRIPT_TESTENTRY (invalid_read_results_in_exception)
   SCRIPT_TESTENTRY (invalid_write_results_in_exception)
+  SCRIPT_TESTENTRY (invalid_read_write_execute_results_in_exception)
   SCRIPT_TESTENTRY (memory_can_be_scanned)
   SCRIPT_TESTENTRY (memory_can_be_scanned_synchronously)
   SCRIPT_TESTENTRY (memory_scan_should_be_interruptible)
@@ -123,9 +135,7 @@ TEST_LIST_BEGIN (script)
 #endif
   SCRIPT_TESTENTRY (process_modules_can_be_enumerated)
   SCRIPT_TESTENTRY (process_modules_can_be_enumerated_synchronously)
-#ifndef HAVE_LINUX
   SCRIPT_TESTENTRY (process_module_can_be_looked_up_from_address)
-#endif
   SCRIPT_TESTENTRY (process_module_can_be_looked_up_from_name)
   SCRIPT_TESTENTRY (process_ranges_can_be_enumerated)
   SCRIPT_TESTENTRY (process_ranges_can_be_enumerated_synchronously)
@@ -147,6 +157,7 @@ TEST_LIST_BEGIN (script)
   SCRIPT_TESTENTRY (module_base_address_can_be_found)
   SCRIPT_TESTENTRY (module_export_can_be_found_by_name)
   SCRIPT_TESTENTRY (api_resolver_can_be_used_to_find_functions)
+  SCRIPT_TESTENTRY (socket_connection_can_be_established)
   SCRIPT_TESTENTRY (socket_type_can_be_inspected)
 #if !defined (HAVE_ANDROID) && !(defined (HAVE_LINUX) && defined (HAVE_ARM)) && \
   !(defined (HAVE_LINUX) && defined (HAVE_MIPS))
@@ -162,6 +173,8 @@ TEST_LIST_BEGIN (script)
   SCRIPT_TESTENTRY (native_pointer_provides_arithmetic_operations)
   SCRIPT_TESTENTRY (native_pointer_to_match_pattern)
   SCRIPT_TESTENTRY (native_function_can_be_invoked)
+  SCRIPT_TESTENTRY (native_function_should_implement_call_and_apply)
+  SCRIPT_TESTENTRY (system_function_can_be_invoked)
   SCRIPT_TESTENTRY (native_function_crash_results_in_exception)
   SCRIPT_TESTENTRY (nested_native_function_crash_is_handled_gracefully)
   SCRIPT_TESTENTRY (variadic_native_function_can_be_invoked)
@@ -181,7 +194,9 @@ TEST_LIST_BEGIN (script)
 #endif
   SCRIPT_TESTENTRY (script_can_be_compiled_to_bytecode)
   SCRIPT_TESTENTRY (script_can_be_reloaded)
-  SCRIPT_TESTENTRY (source_maps_should_be_supported)
+  SCRIPT_TESTENTRY (script_memory_usage)
+  SCRIPT_TESTENTRY (source_maps_should_be_supported_for_our_runtime)
+  SCRIPT_TESTENTRY (source_maps_should_be_supported_for_user_scripts)
   SCRIPT_TESTENTRY (types_handle_invalid_construction)
   SCRIPT_TESTENTRY (weak_callback_is_triggered_on_gc)
   SCRIPT_TESTENTRY (weak_callback_is_triggered_on_unload)
@@ -189,6 +204,8 @@ TEST_LIST_BEGIN (script)
   SCRIPT_TESTENTRY (globals_can_be_dynamically_generated)
   SCRIPT_TESTENTRY (exceptions_can_be_handled)
   SCRIPT_TESTENTRY (debugger_can_be_enabled)
+  SCRIPT_TESTENTRY (objc_api_is_embedded)
+  SCRIPT_TESTENTRY (java_api_is_embedded)
 TEST_LIST_END ()
 
 typedef struct _TestTrigger TestTrigger;
@@ -201,6 +218,7 @@ struct _TestTrigger
   GCond cond;
 };
 
+static gint gum_clobber_system_error (gint value);
 static gint gum_toupper (gchar * str, gint limit);
 static gint64 gum_classify_timestamp (gint64 timestamp);
 static guint64 gum_square (guint64 value);
@@ -416,6 +434,77 @@ SCRIPT_TESTCASE (native_function_can_be_invoked)
   EXPECT_SEND_MESSAGE_WITH ("\"16\"");
   EXPECT_SEND_MESSAGE_WITH ("\"36\"");
   EXPECT_NO_MESSAGES ();
+}
+
+SCRIPT_TESTCASE (native_function_should_implement_call_and_apply)
+{
+  COMPILE_AND_LOAD_SCRIPT (
+      "var f = new NativeFunction(" GUM_PTR_CONST ", 'int', ['int']);"
+      "send(NativeFunction.prototype.call(f, 42));"
+      "send(NativeFunction.prototype.apply(f, [42]));"
+      "send(f.call(null, 42));"
+      "send(f.apply(null, [42]));"
+      "send(f.call(f, 42));"
+      "send(f.apply(f, [42]));"
+      "send(f.call(ptr(" GUM_PTR_CONST "), 42));"
+      "send(f.apply(ptr(" GUM_PTR_CONST "), [42]));",
+      target_function_int, target_function_nested_a, target_function_nested_a);
+  EXPECT_SEND_MESSAGE_WITH ("1890");
+  EXPECT_SEND_MESSAGE_WITH ("1890");
+  EXPECT_SEND_MESSAGE_WITH ("1890");
+  EXPECT_SEND_MESSAGE_WITH ("1890");
+  EXPECT_SEND_MESSAGE_WITH ("1890");
+  EXPECT_SEND_MESSAGE_WITH ("1890");
+  EXPECT_SEND_MESSAGE_WITH ("16855020");
+  EXPECT_SEND_MESSAGE_WITH ("16855020");
+  EXPECT_NO_MESSAGES ();
+}
+
+SCRIPT_TESTCASE (system_function_can_be_invoked)
+{
+#ifdef G_OS_WIN32
+  COMPILE_AND_LOAD_SCRIPT (
+      "var f = new SystemFunction(" GUM_PTR_CONST ", 'int', ['int']);"
+
+      "var result = f(13);"
+      "send(result.value);"
+      "send(result.lastError);"
+
+      "result = f(37);"
+      "send(result.value);"
+      "send(result.lastError);", gum_clobber_system_error);
+#else
+  COMPILE_AND_LOAD_SCRIPT (
+      "var f = new SystemFunction(" GUM_PTR_CONST ", 'int', ['int']);"
+
+      "var result = f(13);"
+      "send(result.value);"
+      "send(result.errno);"
+
+      "result = f(37);"
+      "send(result.value);"
+      "send(result.errno);", gum_clobber_system_error);
+#endif
+
+  EXPECT_SEND_MESSAGE_WITH ("26");
+  EXPECT_SEND_MESSAGE_WITH ("13");
+
+  EXPECT_SEND_MESSAGE_WITH ("74");
+  EXPECT_SEND_MESSAGE_WITH ("37");
+
+  EXPECT_NO_MESSAGES ();
+}
+
+static gint
+gum_clobber_system_error (gint value)
+{
+#ifdef G_OS_WIN32
+  SetLastError (value);
+#else
+  errno = value;
+#endif
+
+  return value * 2;
 }
 
 SCRIPT_TESTCASE (native_function_crash_results_in_exception)
@@ -863,6 +952,111 @@ SCRIPT_TESTCASE (file_can_be_written_to)
   EXPECT_NO_MESSAGES ();
 }
 
+SCRIPT_TESTCASE (socket_connection_can_be_established)
+{
+  fixture->timeout = 10000;
+
+  COMPILE_AND_LOAD_SCRIPT (
+      "Socket.listen({"
+      "  backlog: 1,"
+      "})"
+      ".then(function (listener) {"
+      "  listener.accept()"
+      "  .then(function (client) {"
+      "    return client.input.readAll(5)"
+      "    .then(function (data) {"
+      "      send('server read', data);"
+      "      client.close();"
+      "      listener.close();"
+      "    });"
+      "  })"
+      "  .catch(function (error) {"
+      "    send('error: ' + error.message);"
+      "  });"
+      ""
+      "  return Socket.connect({"
+      "    family: 'ipv4',"
+      "    host: 'localhost',"
+      "    port: listener.port,"
+      "  })"
+      "  .then(function (connection) {"
+      "    return connection.setNoDelay(true)"
+      "    .then(function () {"
+      "      return connection.output.writeAll([0x31, 0x33, 0x33, 0x37, 0x0a])"
+      "      .then(function () {"
+      "        return connection.close();"
+      "      });"
+      "    });"
+      "  })"
+      "  .catch(function (error) {"
+      "    send('error: ' + error.message);"
+      "  });"
+      "})"
+      ".catch(function (error) {"
+      "  send('error: ' + error.message);"
+      "});");
+  EXPECT_SEND_MESSAGE_WITH_PAYLOAD_AND_DATA ("\"server read\"",
+      "31 33 33 37 0a");
+
+#ifdef G_OS_UNIX
+  {
+    const gchar * tmp_dir;
+
+#ifdef HAVE_ANDROID
+    tmp_dir = "/data/local/tmp";
+#else
+    tmp_dir = g_get_tmp_dir ();
+#endif
+
+    COMPILE_AND_LOAD_SCRIPT (
+        "var getpid = new NativeFunction("
+        "    Module.findExportByName(null, 'getpid'), 'int', []);"
+        "var unlink = new NativeFunction("
+        "    Module.findExportByName(null, 'unlink'), 'int', ['pointer']);"
+        ""
+        "Socket.listen({"
+        "  type: 'path',"
+        "  path: '%s/frida-gum-test-listener-' + getpid(),"
+        "  backlog: 1,"
+        "})"
+        ".then(function (listener) {"
+        "  listener.accept()"
+        "  .then(function (client) {"
+        "    return client.input.readAll(5)"
+        "    .then(function (data) {"
+        "      send('server read', data);"
+        "      client.close();"
+        "      listener.close();"
+        "    });"
+        "  })"
+        "  .catch(function (error) {"
+        "    send('error: ' + error.message);"
+        "  });"
+        ""
+        "  return Socket.connect({"
+        "    type: 'path',"
+        "    path: listener.path,"
+        "  })"
+        "  .then(function (connection) {"
+        "    unlink(Memory.allocUtf8String(listener.path));"
+        "    return connection.output.writeAll([0x31, 0x33, 0x33, 0x37, 0x0a])"
+        "    .then(function () {"
+        "      return connection.close();"
+        "    });"
+        "  })"
+        "  .catch(function (error) {"
+        "    send('error: ' + error.message);"
+        "  });"
+        "})"
+        ".catch(function (error) {"
+        "  send('error: ' + error.message);"
+        "});", tmp_dir);
+    EXPECT_SEND_MESSAGE_WITH_PAYLOAD_AND_DATA ("\"server read\"",
+        "31 33 33 37 0a");
+  }
+#endif
+}
+
 SCRIPT_TESTCASE (socket_type_can_be_inspected)
 {
   int fd;
@@ -915,7 +1109,7 @@ SCRIPT_TESTCASE (socket_type_can_be_inspected)
   EXPECT_SEND_MESSAGE_WITH ("\"unix:dgram\"");
   close (fd);
 
-  fd = open ("/etc/passwd", O_RDONLY);
+  fd = open ("/etc/hosts", O_RDONLY);
   g_assert (fd >= 0);
   COMPILE_AND_LOAD_SCRIPT ("send(Socket.type(%d));", fd);
   EXPECT_SEND_MESSAGE_WITH ("null");
@@ -1058,53 +1252,62 @@ on_read_ready (GObject * source_object,
 
 SCRIPT_TESTCASE (execution_can_be_traced)
 {
+  GumThreadId test_thread_id;
+
   if (!g_test_slow ())
   {
     g_print ("<skipping, run in slow mode> ");
     return;
   }
 
+  test_thread_id = gum_process_get_current_thread_id ();
+
   COMPILE_AND_LOAD_SCRIPT (
-    "var me = Process.getCurrentThreadId();"
-    "Stalker.follow(me, {"
+    "Stalker.follow(%" G_GSIZE_FORMAT ", {"
     "  events: {"
     "    call: true,"
     "    ret: false,"
     "    exec: false"
     "  },"
     "  onReceive: function (events) {"
-    "    send(events.length > 0);"
+    "    send('onReceive: ' + (events.byteLength > 0));"
     "  },"
     "  onCallSummary: function (summary) {"
-    "    send(Object.keys(summary).length > 0);"
+    "    send('onCallSummary: ' + (Object.keys(summary).length > 0));"
     "  }"
     "});"
     "recv('stop', function (message) {"
-    "  Stalker.unfollow();"
-    "});");
+    "  Stalker.unfollow(%" G_GSIZE_FORMAT ");"
+    "});", test_thread_id, test_thread_id);
   g_usleep (1);
   EXPECT_NO_MESSAGES ();
   POST_MESSAGE ("{\"type\":\"stop\"}");
-  EXPECT_SEND_MESSAGE_WITH ("true");
-  EXPECT_SEND_MESSAGE_WITH ("true");
+  EXPECT_SEND_MESSAGE_WITH ("\"onCallSummary: true\"");
+  EXPECT_SEND_MESSAGE_WITH ("\"onReceive: true\"");
 }
 
 SCRIPT_TESTCASE (call_can_be_probed)
 {
+  GumThreadId test_thread_id;
+
   if (!g_test_slow ())
   {
     g_print ("<skipping, run in slow mode> ");
     return;
   }
 
-  COMPILE_AND_LOAD_SCRIPT ("Stalker.follow();"
+  test_thread_id = gum_process_get_current_thread_id ();
+
+  COMPILE_AND_LOAD_SCRIPT (
     "Stalker.addCallProbe(" GUM_PTR_CONST ", function (args) {"
     "  send(args[0].toInt32());"
     "});"
+    "Stalker.follow(%" G_GSIZE_FORMAT ");"
     "recv('stop', function (message) {"
-    "  Stalker.unfollow();"
-    "});", target_function_int);
-  EXPECT_NO_MESSAGES ();
+    "  Stalker.unfollow(%" G_GSIZE_FORMAT ");"
+    "});"
+    "send('ready');", target_function_int, test_thread_id, test_thread_id);
+  EXPECT_SEND_MESSAGE_WITH ("\"ready\"");
   target_function_int (1337);
   EXPECT_SEND_MESSAGE_WITH ("1337");
   POST_MESSAGE ("{\"type\":\"stop\"}");
@@ -1262,10 +1465,9 @@ SCRIPT_TESTCASE (process_modules_can_be_enumerated_synchronously)
   EXPECT_SEND_MESSAGE_WITH ("true");
 }
 
-#ifndef HAVE_LINUX
-
 SCRIPT_TESTCASE (process_module_can_be_looked_up_from_address)
 {
+#ifndef HAVE_LINUX
   GModule * m;
   gpointer f;
   gboolean found;
@@ -1285,9 +1487,18 @@ SCRIPT_TESTCASE (process_module_can_be_looked_up_from_address)
       ")).length > 0);",
       f);
   EXPECT_SEND_MESSAGE_WITH ("true");
+#endif
+
+  COMPILE_AND_LOAD_SCRIPT (
+      "var someModule = Process.enumerateModulesSync()[1];"
+      "var foundModule = Process.findModuleByAddress(someModule.base);"
+      "send(foundModule !== null);"
+      "send(foundModule.name === someModule.name);");
+  EXPECT_SEND_MESSAGE_WITH ("true");
+  EXPECT_SEND_MESSAGE_WITH ("true");
+  EXPECT_NO_MESSAGES ();
 }
 
-#endif
 
 SCRIPT_TESTCASE (process_module_can_be_looked_up_from_name)
 {
@@ -1352,6 +1563,15 @@ SCRIPT_TESTCASE (process_range_can_be_looked_up_from_address)
       "send(Process.findRangeByAddress(" GUM_PTR_CONST ") !== null);",
       f);
   EXPECT_SEND_MESSAGE_WITH ("true");
+
+  COMPILE_AND_LOAD_SCRIPT (
+      "var someRange = Process.enumerateRangesSync('r-x')[1];"
+      "var foundRange = Process.findRangeByAddress(someRange.base);"
+      "send(foundRange !== null);"
+      "send(foundRange.base.equals(someRange.base));");
+  EXPECT_SEND_MESSAGE_WITH ("true");
+  EXPECT_SEND_MESSAGE_WITH ("true");
+  EXPECT_NO_MESSAGES ();
 
   COMPILE_AND_LOAD_SCRIPT (
       "send(Object.keys(Process.getRangeByAddress(" GUM_PTR_CONST
@@ -1656,6 +1876,25 @@ SCRIPT_TESTCASE (message_can_be_received)
   EXPECT_SEND_MESSAGE_WITH ("\"pong\"");
 }
 
+SCRIPT_TESTCASE (message_can_be_received_with_data)
+{
+  const guint8 data_to_send[2] = { 0x13, 0x37 };
+  GBytes * bytes;
+
+  COMPILE_AND_LOAD_SCRIPT (
+      "recv(function (message, data) {"
+      "  if (message.type === 'ping')"
+      "    send('pong', data);"
+      "});");
+  EXPECT_NO_MESSAGES ();
+
+  bytes = g_bytes_new_static (data_to_send, sizeof (data_to_send));
+  gum_script_post (fixture->script, "{\"type\":\"ping\"}", bytes);
+  g_bytes_unref (bytes);
+
+  EXPECT_SEND_MESSAGE_WITH_PAYLOAD_AND_DATA ("\"pong\"", "13 37");
+}
+
 SCRIPT_TESTCASE (recv_may_specify_desired_message_type)
 {
   COMPILE_AND_LOAD_SCRIPT (
@@ -1679,7 +1918,7 @@ struct _GumInvokeTargetContext
   volatile gboolean finished;
 };
 
-SCRIPT_TESTCASE (recv_can_be_waited_for)
+SCRIPT_TESTCASE (recv_can_be_waited_for_from_an_application_thread)
 {
   GThread * worker_thread;
   GumInvokeTargetContext ctx;
@@ -1711,6 +1950,28 @@ SCRIPT_TESTCASE (recv_can_be_waited_for)
   POST_MESSAGE ("{\"type\":\"poke\"}");
   g_thread_join (worker_thread);
   g_assert (ctx.finished);
+  EXPECT_SEND_MESSAGE_WITH ("\"pokeBack\"");
+  EXPECT_SEND_MESSAGE_WITH ("\"pokeReceived\"");
+  EXPECT_NO_MESSAGES ();
+}
+
+SCRIPT_TESTCASE (recv_can_be_waited_for_from_our_js_thread)
+{
+  /*
+   * We do the wait() in a setTimeout() as our test fixture loads the
+   * script synchronously...
+   */
+  COMPILE_AND_LOAD_SCRIPT (
+      "setTimeout(function () {"
+      "  var op = recv('poke', function (pokeMessage) {"
+      "    send('pokeBack');"
+      "  });"
+      "  op.wait();"
+      "  send('pokeReceived');"
+      "}, 0);", target_function_int);
+  EXPECT_NO_MESSAGES ();
+
+  POST_MESSAGE ("{\"type\":\"poke\"}");
   EXPECT_SEND_MESSAGE_WITH ("\"pokeBack\"");
   EXPECT_SEND_MESSAGE_WITH ("\"pokeReceived\"");
   EXPECT_NO_MESSAGES ();
@@ -1752,9 +2013,9 @@ SCRIPT_TESTCASE (timeout_can_be_scheduled)
   EXPECT_NO_MESSAGES ();
 
   COMPILE_AND_LOAD_SCRIPT (
-      "setTimeout(function () {"
-      "  send(1338);"
-      "}, uint64(20));");
+      "setTimeout(function (value) {"
+      "  send(value);"
+      "}, uint64(20), 1338);");
   EXPECT_NO_MESSAGES ();
 
   g_usleep (25000);
@@ -1782,9 +2043,9 @@ SCRIPT_TESTCASE (timeout_can_be_cancelled)
 SCRIPT_TESTCASE (interval_can_be_scheduled)
 {
   COMPILE_AND_LOAD_SCRIPT (
-      "setInterval(function () {"
-      "  send(1337);"
-      "}, 20);");
+      "setInterval(function (value) {"
+      "  send(value);"
+      "}, 20, 1337);");
   EXPECT_NO_MESSAGES ();
 
   g_usleep (25000);
@@ -1811,6 +2072,49 @@ SCRIPT_TESTCASE (interval_can_be_cancelled)
   EXPECT_SEND_MESSAGE_WITH ("2");
 
   g_usleep (25000);
+  EXPECT_NO_MESSAGES ();
+}
+
+SCRIPT_TESTCASE (callback_can_be_scheduled)
+{
+  COMPILE_AND_LOAD_SCRIPT (
+      "setImmediate(function () {"
+      "  send(1337);"
+      "});");
+  EXPECT_SEND_MESSAGE_WITH ("1337");
+  EXPECT_NO_MESSAGES ();
+}
+
+SCRIPT_TESTCASE (callback_can_be_scheduled_from_a_scheduled_callback)
+{
+  COMPILE_AND_LOAD_SCRIPT (
+      "setImmediate(function () {"
+      "  send(1337);"
+      "  Script.nextTick(function () { send(1338); });"
+      "  setImmediate(function () { send(1339); });"
+      "});");
+  EXPECT_SEND_MESSAGE_WITH ("1337");
+  EXPECT_SEND_MESSAGE_WITH ("1338");
+  EXPECT_SEND_MESSAGE_WITH ("1339");
+  EXPECT_NO_MESSAGES ();
+}
+
+SCRIPT_TESTCASE (callback_can_be_cancelled)
+{
+  COMPILE_AND_LOAD_SCRIPT (
+      "var id = setImmediate(function () {"
+      "  send(1337);"
+      "});"
+      "clearImmediate(id);");
+  g_usleep (25000);
+  EXPECT_NO_MESSAGES ();
+}
+
+SCRIPT_TESTCASE (callback_can_be_scheduled_on_next_tick)
+{
+  COMPILE_AND_LOAD_SCRIPT (
+      "Script.nextTick(send, 1337, [0x13, 0x37, 0x0a]);");
+  EXPECT_SEND_MESSAGE_WITH_PAYLOAD_AND_DATA ("1337", "13 37 0a");
   EXPECT_NO_MESSAGES ();
 }
 
@@ -1845,6 +2149,8 @@ SCRIPT_TESTCASE (argument_can_be_replaced)
   EXPECT_NO_MESSAGES ();
   g_assert_cmpstr (target_function_string ("Hello"), ==, "Hei");
   EXPECT_NO_MESSAGES ();
+  g_assert_cmpstr (target_function_string ("Hello"), ==, "Hei");
+  EXPECT_NO_MESSAGES ();
 }
 
 SCRIPT_TESTCASE (return_value_can_be_read)
@@ -1869,7 +2175,6 @@ SCRIPT_TESTCASE (return_value_can_be_replaced)
       "    retval.replace(1337);"
       "  }"
       "});", target_function_int);
-
   EXPECT_NO_MESSAGES ();
   g_assert_cmpint (target_function_int (7), ==, 1337);
   EXPECT_NO_MESSAGES ();
@@ -1880,9 +2185,25 @@ SCRIPT_TESTCASE (return_value_can_be_replaced)
       "    retval.replace({ handle: ptr(1338) });"
       "  }"
       "});", target_function_int);
-
   EXPECT_NO_MESSAGES ();
   g_assert_cmpint (target_function_int (7), ==, 1338);
+  EXPECT_NO_MESSAGES ();
+
+  COMPILE_AND_LOAD_SCRIPT (
+      "var savedRetval = null;"
+      "Interceptor.attach(" GUM_PTR_CONST  ", {"
+      "  onLeave: function (retval) {"
+      "    savedRetval = retval;"
+      "  }"
+      "});"
+      "recv('try-replace', function () {"
+      "  savedRetval.replace(1337);"
+      "});", target_function_int);
+  EXPECT_NO_MESSAGES ();
+  target_function_int (7);
+  EXPECT_NO_MESSAGES ();
+  POST_MESSAGE ("{\"type\":\"try-replace\"}");
+  EXPECT_ERROR_MESSAGE_WITH (ANY_LINE_NUMBER, "Error: invalid operation");
   EXPECT_NO_MESSAGES ();
 }
 
@@ -1934,7 +2255,7 @@ SCRIPT_TESTCASE (register_can_be_written)
   EXPECT_NO_MESSAGES ();
 }
 
-SCRIPT_TESTCASE (system_error_can_be_read)
+SCRIPT_TESTCASE (system_error_can_be_read_from_interceptor_listener)
 {
 #ifdef G_OS_WIN32
   COMPILE_AND_LOAD_SCRIPT (
@@ -1965,7 +2286,49 @@ SCRIPT_TESTCASE (system_error_can_be_read)
   EXPECT_SEND_MESSAGE_WITH ("37");
 }
 
-SCRIPT_TESTCASE (system_error_can_be_replaced)
+SCRIPT_TESTCASE (system_error_can_be_read_from_replacement_function)
+{
+  GumInterceptor * interceptor;
+
+  interceptor = gum_interceptor_obtain ();
+
+  /* Replacement should be used regardless: */
+  gum_interceptor_ignore_current_thread (interceptor);
+
+#ifdef G_OS_WIN32
+  COMPILE_AND_LOAD_SCRIPT (
+      "Interceptor.replace(" GUM_PTR_CONST ","
+      "    new NativeCallback(function (arg) {"
+      "  send(this.lastError);"
+      "  return 0;"
+      "}, 'int', ['int']));", target_function_int);
+
+  SetLastError (13);
+  target_function_int (7);
+  SetLastError (37);
+  target_function_int (7);
+#else
+  COMPILE_AND_LOAD_SCRIPT (
+      "Interceptor.replace(" GUM_PTR_CONST ","
+      "    new NativeCallback(function (arg) {"
+      "  send(this.errno);"
+      "  return 0;"
+      "}, 'int', ['int']));", target_function_int);
+
+  errno = 13;
+  target_function_int (7);
+  errno = 37;
+  target_function_int (7);
+#endif
+  EXPECT_SEND_MESSAGE_WITH ("13");
+  EXPECT_SEND_MESSAGE_WITH ("37");
+
+  gum_interceptor_unignore_current_thread (interceptor);
+
+  g_object_unref (interceptor);
+}
+
+SCRIPT_TESTCASE (system_error_can_be_replaced_from_interceptor_listener)
 {
 #ifdef G_OS_WIN32
   COMPILE_AND_LOAD_SCRIPT (
@@ -1985,6 +2348,33 @@ SCRIPT_TESTCASE (system_error_can_be_replaced)
       "    this.errno = 1337;"
       "  }"
       "});", target_function_int);
+
+  errno = 42;
+  target_function_int (7);
+  g_assert_cmpint (errno, ==, 1337);
+#endif
+}
+
+SCRIPT_TESTCASE (system_error_can_be_replaced_from_replacement_function)
+{
+#ifdef G_OS_WIN32
+  COMPILE_AND_LOAD_SCRIPT (
+      "Interceptor.replace(" GUM_PTR_CONST ","
+      "    new NativeCallback(function (arg) {"
+      "  this.lastError = 1337;"
+      "  return 0;"
+      "}, 'int', ['int']));", target_function_int);
+
+  SetLastError (42);
+  target_function_int (7);
+  g_assert_cmpint (GetLastError (), ==, 1337);
+#else
+  COMPILE_AND_LOAD_SCRIPT (
+      "Interceptor.replace(" GUM_PTR_CONST ","
+      "    new NativeCallback(function (arg) {"
+      "  this.errno = 1337;"
+      "  return 0;"
+      "}, 'int', ['int']));", target_function_int);
 
   errno = 42;
   target_function_int (7);
@@ -2269,6 +2659,24 @@ SCRIPT_TESTCASE (function_can_be_replaced)
   EXPECT_NO_MESSAGES ();
 }
 
+SCRIPT_TESTCASE (function_can_be_replaced_and_called_immediately)
+{
+  COMPILE_AND_LOAD_SCRIPT (
+      "var address = " GUM_PTR_CONST ";"
+      "Interceptor.replace(address,"
+      "    new NativeCallback(function (arg) {"
+      "  send(arg);"
+      "  return 1337;"
+      "}, 'int', ['int']));"
+      "var f = new NativeFunction(address, 'int', ['int']);"
+      "f(7);"
+      "Interceptor.flush();"
+      "f(8);",
+      target_function_int);
+  EXPECT_SEND_MESSAGE_WITH ("8");
+  EXPECT_NO_MESSAGES ();
+}
+
 SCRIPT_TESTCASE (function_can_be_reverted)
 {
   COMPILE_AND_LOAD_SCRIPT (
@@ -2360,6 +2768,24 @@ SCRIPT_TESTCASE (interceptor_on_leave_performance)
 {
   COMPILE_AND_LOAD_SCRIPT (
       "Interceptor.attach(" GUM_PTR_CONST ", {"
+      "  onLeave: function (retval) {"
+      "  }"
+      "});", target_function_int);
+
+#if 1
+  measure_target_function_int_overhead ();
+#else
+  while (TRUE)
+    target_function_int (7);
+#endif
+}
+
+SCRIPT_TESTCASE (interceptor_on_enter_and_leave_performance)
+{
+  COMPILE_AND_LOAD_SCRIPT (
+      "Interceptor.attach(" GUM_PTR_CONST ", {"
+      "  onEnter: function (args) {"
+      "  },"
       "  onLeave: function (retval) {"
       "  }"
       "});", target_function_int);
@@ -2616,6 +3042,11 @@ SCRIPT_TESTCASE (memory_can_be_allocated)
   g_assert (p != 0);
   test_script_message_item_free (item);
   g_assert_cmpuint (p & (gum_query_page_size () - 1), ==, 0);
+
+  COMPILE_AND_LOAD_SCRIPT(
+      "var p = Memory.alloc(5);"
+      "send('p', Memory.readByteArray(p, 5));");
+  EXPECT_SEND_MESSAGE_WITH_PAYLOAD_AND_DATA("\"p\"", "00 00 00 00 00");
 }
 
 SCRIPT_TESTCASE (memory_can_be_copied)
@@ -2703,6 +3134,23 @@ SCRIPT_TESTCASE (memory_can_be_protected)
   g_assert (exception_on_write);
 
   gum_free_pages (buf);
+}
+
+SCRIPT_TESTCASE (code_can_be_patched)
+{
+  guint8 * code;
+
+  code = gum_alloc_n_pages (1, GUM_PAGE_RW);
+  code[7] = 0xc3;
+  gum_mprotect (code, gum_query_page_size (), GUM_PAGE_RX);
+
+  COMPILE_AND_LOAD_SCRIPT ("Memory.patchCode(" GUM_PTR_CONST ", 1, "
+      "function (ptr) {"
+          "Memory.writeU8(ptr, 0x90);"
+      "});", code + 7);
+  g_assert_cmphex (code[7], ==, 0x90);
+
+  gum_free_pages (code);
 }
 
 SCRIPT_TESTCASE (s8_can_be_read)
@@ -3293,6 +3741,34 @@ SCRIPT_TESTCASE (invalid_write_results_in_exception)
   }
 }
 
+SCRIPT_TESTCASE (invalid_read_write_execute_results_in_exception)
+{
+  if (RUNNING_ON_VALGRIND)
+  {
+    g_print ("<skipping, not compatible with Valgrind> ");
+    return;
+  }
+
+  COMPILE_AND_LOAD_SCRIPT ("Memory.readU8(ptr(\"1328\"));");
+  EXPECT_ERROR_MESSAGE_WITH (1, "Error: access violation accessing 0x530");
+  EXPECT_NO_MESSAGES ();
+
+  COMPILE_AND_LOAD_SCRIPT ("Memory.writeU8(ptr(\"1328\"), 42);");
+  EXPECT_ERROR_MESSAGE_WITH (1, "Error: access violation accessing 0x530");
+  EXPECT_NO_MESSAGES ();
+
+  COMPILE_AND_LOAD_SCRIPT ("var data = Memory.alloc(Process.pageSize);"
+      "var f = new NativeFunction(data, 'void', []);"
+      "try {"
+      "  f();"
+      "} catch (e) {"
+      "  send(e.toString().indexOf('Error: access violation accessing 0x')"
+      "      === 0);"
+      "}");
+  EXPECT_SEND_MESSAGE_WITH ("true");
+  EXPECT_NO_MESSAGES ();
+}
+
 SCRIPT_TESTCASE (script_can_be_compiled_to_bytecode)
 {
   GError * error;
@@ -3321,7 +3797,7 @@ SCRIPT_TESTCASE (script_can_be_compiled_to_bytecode)
   {
     g_assert (code == NULL);
     g_assert (error != NULL);
-    g_assert_cmpstr (error->message, ==, "Not yet supported by the V8 runtime");
+    g_assert_cmpstr (error->message, ==, "not yet supported by the V8 runtime");
     g_clear_error (&error);
 
     code = g_bytes_new (NULL, 0);
@@ -3357,7 +3833,7 @@ SCRIPT_TESTCASE (script_can_be_compiled_to_bytecode)
   {
     g_assert (script == NULL);
     g_assert (error != NULL);
-    g_assert_cmpstr (error->message, ==, "Not yet supported by the V8 runtime");
+    g_assert_cmpstr (error->message, ==, "not yet supported by the V8 runtime");
     g_clear_error (&error);
   }
 
@@ -3379,7 +3855,65 @@ SCRIPT_TESTCASE (script_can_be_reloaded)
   EXPECT_SEND_MESSAGE_WITH ("\"undefined\"");
 }
 
-SCRIPT_TESTCASE (source_maps_should_be_supported)
+SCRIPT_TESTCASE (script_memory_usage)
+{
+  GumScript * script;
+  GTimer * timer;
+  guint before, after;
+
+  if (!GUM_DUK_IS_SCRIPT_BACKEND (fixture->backend))
+  {
+    g_print ("<skipping, measurement only valid for the Duktape runtime> ");
+    return;
+  }
+
+  /* Warm up */
+  script = gum_script_backend_create_sync (fixture->backend, "testcase",
+      "'use strict';", NULL, NULL);
+  gum_script_load_sync (script, NULL);
+  gum_script_unload_sync (script, NULL);
+  g_object_unref (script);
+
+  timer = g_timer_new ();
+
+  before = gum_peek_private_memory_usage ();
+
+  g_timer_reset (timer);
+  script = gum_script_backend_create_sync (fixture->backend, "testcase",
+      "'use strict';", NULL, NULL);
+  g_print ("created in %u ms\n",
+      (guint) (g_timer_elapsed (timer, NULL) * 1000.0));
+
+  g_timer_reset (timer);
+  gum_script_load_sync (script, NULL);
+  g_print ("loaded in %u ms\n",
+      (guint) (g_timer_elapsed (timer, NULL) * 1000.0));
+
+  after = gum_peek_private_memory_usage ();
+  g_print ("memory usage: %u bytes\n", after - before);
+
+  g_timer_reset (timer);
+  gum_script_unload_sync (script, NULL);
+  g_print ("unloaded in %u ms\n",
+      (guint) (g_timer_elapsed (timer, NULL) * 1000.0));
+
+  g_object_unref (script);
+}
+
+SCRIPT_TESTCASE (source_maps_should_be_supported_for_our_runtime)
+{
+  TestScriptMessageItem * item;
+
+  COMPILE_AND_LOAD_SCRIPT ("hexdump(null);");
+
+  item = test_script_fixture_pop_message (fixture);
+  g_assert (strstr (item->message, " (frida/runtime/hexdump.js:") != NULL);
+  test_script_message_item_free (item);
+
+  EXPECT_NO_MESSAGES ();
+}
+
+SCRIPT_TESTCASE (source_maps_should_be_supported_for_user_scripts)
 {
   TestScriptMessageItem * item;
 
@@ -3465,10 +3999,11 @@ SCRIPT_TESTCASE (source_maps_should_be_supported)
         "\"payload\":\"Error: Not yet implemented\\n"
         "    at math.js:5\\n"
         "    at index.js:6\\n"
-        "    call (native)\\n"
+        "    at call (native)\\n"
         "    at s (node_modules/frida/node_modules/browserify/node_modules/"
             "browser-pack/_prelude.js:1)\\n"
-        "    at e (node_modules/frida/node_modules/browserify/node_modules/")
+        "    at e (node_modules/frida/node_modules/browserify/node_modules/"
+            "browser-pack/_prelude.js:1)\\n")
         != NULL);
   }
   else
@@ -3493,12 +4028,12 @@ SCRIPT_TESTCASE (source_maps_should_be_supported)
   if (GUM_DUK_IS_SCRIPT_BACKEND (fixture->backend))
   {
     g_assert (strstr (item->message, "\"stack\":\"Error: Oops!\\n"
-        "    at index.js:12\"") != NULL);
+        "    at index.js:12\\n") != NULL);
   }
   else
   {
     g_assert (strstr (item->message, "\"stack\":\"Error: Oops!\\n"
-        "    at index.js:12:1\"") != NULL);
+        "    at index.js:12:1\\n") != NULL);
   }
   g_assert (strstr (item->message, "\"fileName\":\"index.js\"") != NULL);
   g_assert (strstr (item->message, "\"lineNumber\":12") != NULL);
@@ -3516,7 +4051,7 @@ SCRIPT_TESTCASE (types_handle_invalid_construction)
       "} catch (e) {"
       "  send(e.message);"
       "}");
-  EXPECT_SEND_MESSAGE_WITH ("\"Use `new NativePointer()` to create a new "
+  EXPECT_SEND_MESSAGE_WITH ("\"use `new NativePointer()` to create a new "
       "instance, or use one of the two shorthands: `ptr()` and `NULL`\"");
 
   COMPILE_AND_LOAD_SCRIPT (
@@ -3525,7 +4060,7 @@ SCRIPT_TESTCASE (types_handle_invalid_construction)
       "} catch (e) {"
       "  send(e.message);"
       "}");
-  EXPECT_SEND_MESSAGE_WITH ("\"Use `new NativeFunction()` to create a new "
+  EXPECT_SEND_MESSAGE_WITH ("\"use `new NativeFunction()` to create a new "
       "instance\"");
 
   COMPILE_AND_LOAD_SCRIPT (
@@ -3534,7 +4069,7 @@ SCRIPT_TESTCASE (types_handle_invalid_construction)
       "} catch (e) {"
       "  send(e.message);"
       "}");
-  EXPECT_SEND_MESSAGE_WITH ("\"Use `new NativeCallback()` to create a new "
+  EXPECT_SEND_MESSAGE_WITH ("\"use `new NativeCallback()` to create a new "
       "instance\"");
 
   COMPILE_AND_LOAD_SCRIPT (
@@ -3543,7 +4078,7 @@ SCRIPT_TESTCASE (types_handle_invalid_construction)
       "} catch (e) {"
       "  send(e.message);"
       "}");
-  EXPECT_SEND_MESSAGE_WITH ("\"Use `new File()` to create a new instance\"");
+  EXPECT_SEND_MESSAGE_WITH ("\"use `new File()` to create a new instance\"");
 #endif
 }
 
@@ -3669,14 +4204,14 @@ SCRIPT_TESTCASE (exceptions_can_be_handled)
   EXPECT_NO_MESSAGES ();
 }
 
-#include "script-debugserver.c"
+#include "script-dukdebugserver.c"
+#include "script-v8debugserver.c"
 
 SCRIPT_TESTCASE (debugger_can_be_enabled)
 {
   GumScript * badger, * snake;
   GMainLoop * loop;
   const guint16 port = 5858;
-  GumDebugServer * server;
 
   if (!g_test_slow ())
   {
@@ -3700,14 +4235,43 @@ SCRIPT_TESTCASE (debugger_can_be_enabled)
 
   loop = g_main_loop_new (g_main_context_get_thread_default (), FALSE);
 
-  server = gum_debug_server_new (fixture->backend, port);
+  if (GUM_DUK_IS_SCRIPT_BACKEND (fixture->backend))
+  {
+    GumDukDebugServer * server;
 
-  g_print ("Debugger enabled. You may now connect to port %u.\n", port);
-  g_main_loop_run (loop);
+    server = gum_duk_debug_server_new (fixture->backend, port);
 
-  gum_debug_server_free (server);
+    g_print ("Debugger enabled. You may now connect to port %u and upwards\n",
+        port);
+    g_main_loop_run (loop);
+
+    gum_duk_debug_server_free (server);
+  }
+  else
+  {
+    GumV8DebugServer * server;
+
+    server = gum_v8_debug_server_new (fixture->backend, port);
+
+    g_print ("Debugger enabled. You may now connect to port %u.\n", port);
+    g_main_loop_run (loop);
+
+    gum_v8_debug_server_free (server);
+  }
 
   g_main_loop_unref (loop);
+}
+
+SCRIPT_TESTCASE (objc_api_is_embedded)
+{
+  COMPILE_AND_LOAD_SCRIPT ("send(typeof ObjC.available);");
+  EXPECT_SEND_MESSAGE_WITH ("\"boolean\"");
+}
+
+SCRIPT_TESTCASE (java_api_is_embedded)
+{
+  COMPILE_AND_LOAD_SCRIPT ("send(typeof Java.available);");
+  EXPECT_SEND_MESSAGE_WITH ("\"boolean\"");
 }
 
 static void
@@ -3730,6 +4294,15 @@ target_function_int (int arg)
     result += i * arg;
 
   gum_script_dummy_global_to_trick_optimizer += result;
+
+  /*
+   * Throw in a dummy call to an external function so the platform's default ABI
+   * is used at call-sites. Because this function is static there is otherwise
+   * a chance that the compiler will invent its own calling convention, and any
+   * JS-defined replacement function (NativeCallback) will be prone to clobber
+   * registers used by the custom calling convention.
+   */
+  fflush (stdout);
 
   return result;
 }

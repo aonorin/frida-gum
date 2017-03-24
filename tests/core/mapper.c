@@ -11,8 +11,9 @@ main (gint argc,
       gchar * argv[])
 {
   const gchar * dylib_path;
-  mach_port_name_t task;
+  mach_port_t task;
   GumCpuType cpu_type;
+  GumDarwinModuleResolver * resolver;
   GumDarwinMapper * mapper;
   mach_vm_address_t base_address = 0;
   kern_return_t kr;
@@ -20,9 +21,7 @@ main (gint argc,
   GumDarwinMapperDestructor destructor;
   UnixAttackerEntrypoint entrypoint;
 
-#if GLIB_CHECK_VERSION (2, 46, 0)
   glib_init ();
-#endif
 
   if (argc != 2)
   {
@@ -44,7 +43,8 @@ main (gint argc,
 # error Unsupported CPU type
 #endif
 
-  mapper = gum_darwin_mapper_new (dylib_path, task, cpu_type);
+  resolver = gum_darwin_module_resolver_new (task);
+  mapper = gum_darwin_mapper_new_from_file (dylib_path, resolver);
 
   kr = mach_vm_allocate (task, &base_address, gum_darwin_mapper_size (mapper),
       VM_FLAGS_ANYWHERE);
@@ -66,7 +66,8 @@ main (gint argc,
   kr = mach_vm_deallocate (task, base_address, gum_darwin_mapper_size (mapper));
   g_assert_cmpint (kr, ==, KERN_SUCCESS);
 
-  gum_darwin_mapper_free (mapper);
+  g_object_unref (mapper);
+  g_object_unref (resolver);
 
   return 0;
 }

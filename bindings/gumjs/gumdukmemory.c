@@ -16,6 +16,7 @@
 #endif
 
 typedef guint GumMemoryValueType;
+typedef struct _GumMemoryPatchContext GumMemoryPatchContext;
 typedef struct _GumMemoryScanContext GumMemoryScanContext;
 
 enum _GumMemoryValueType
@@ -29,6 +30,8 @@ enum _GumMemoryValueType
   GUM_MEMORY_VALUE_U32,
   GUM_MEMORY_VALUE_S64,
   GUM_MEMORY_VALUE_U64,
+  GUM_MEMORY_VALUE_LONG,
+  GUM_MEMORY_VALUE_ULONG,
   GUM_MEMORY_VALUE_FLOAT,
   GUM_MEMORY_VALUE_DOUBLE,
   GUM_MEMORY_VALUE_BYTE_ARRAY,
@@ -36,6 +39,13 @@ enum _GumMemoryValueType
   GUM_MEMORY_VALUE_UTF8_STRING,
   GUM_MEMORY_VALUE_UTF16_STRING,
   GUM_MEMORY_VALUE_ANSI_STRING
+};
+
+struct _GumMemoryPatchContext
+{
+  GumDukHeapPtr apply;
+
+  GumDukScope * scope;
 };
 
 struct _GumMemoryScanContext
@@ -53,6 +63,9 @@ GUMJS_DECLARE_CONSTRUCTOR (gumjs_memory_construct)
 GUMJS_DECLARE_FUNCTION (gumjs_memory_alloc)
 GUMJS_DECLARE_FUNCTION (gumjs_memory_copy)
 GUMJS_DECLARE_FUNCTION (gumjs_memory_protect)
+GUMJS_DECLARE_FUNCTION (gumjs_memory_patch_code)
+static void gum_memory_patch_context_apply (gpointer mem,
+    GumMemoryPatchContext * self);
 
 static int gum_duk_memory_read (GumMemoryValueType type,
     const GumDukArgs * args);
@@ -99,6 +112,8 @@ GUMJS_DEFINE_MEMORY_READ_WRITE (S32)
 GUMJS_DEFINE_MEMORY_READ_WRITE (U32)
 GUMJS_DEFINE_MEMORY_READ_WRITE (S64)
 GUMJS_DEFINE_MEMORY_READ_WRITE (U64)
+GUMJS_DEFINE_MEMORY_READ_WRITE (LONG)
+GUMJS_DEFINE_MEMORY_READ_WRITE (ULONG)
 GUMJS_DEFINE_MEMORY_READ_WRITE (FLOAT)
 GUMJS_DEFINE_MEMORY_READ_WRITE (DOUBLE)
 GUMJS_DEFINE_MEMORY_READ_WRITE (BYTE_ARRAY)
@@ -115,11 +130,12 @@ GUMJS_DECLARE_FUNCTION (gumjs_memory_scan)
 static void gum_memory_scan_context_free (GumMemoryScanContext * ctx);
 static void gum_memory_scan_context_run (GumMemoryScanContext * self);
 static gboolean gum_memory_scan_context_emit_match (GumAddress address,
-    gsize size, gpointer user_data);
+    gsize size, GumMemoryScanContext * self);
 GUMJS_DECLARE_FUNCTION (gumjs_memory_scan_sync)
 static gboolean gum_append_match (GumAddress address, gsize size,
-    gpointer user_data);
+    GumDukCore * core);
 
+GUMJS_DECLARE_CONSTRUCTOR (gumjs_memory_access_monitor_construct)
 GUMJS_DECLARE_FUNCTION (gumjs_memory_access_monitor_enable)
 GUMJS_DECLARE_FUNCTION (gumjs_memory_access_monitor_disable)
 
@@ -128,6 +144,7 @@ static const duk_function_list_entry gumjs_memory_functions[] =
   { "alloc", gumjs_memory_alloc, 1 },
   { "copy", gumjs_memory_copy, 3 },
   { "protect", gumjs_memory_protect, 3 },
+  { "_patchCode", gumjs_memory_patch_code, 3 },
 
   GUMJS_EXPORT_MEMORY_READ_WRITE ("Pointer", POINTER),
   GUMJS_EXPORT_MEMORY_READ_WRITE ("S8", S8),
@@ -138,6 +155,12 @@ static const duk_function_list_entry gumjs_memory_functions[] =
   GUMJS_EXPORT_MEMORY_READ_WRITE ("U32", U32),
   GUMJS_EXPORT_MEMORY_READ_WRITE ("S64", S64),
   GUMJS_EXPORT_MEMORY_READ_WRITE ("U64", U64),
+  GUMJS_EXPORT_MEMORY_READ_WRITE ("Short", S16),
+  GUMJS_EXPORT_MEMORY_READ_WRITE ("UShort", U16),
+  GUMJS_EXPORT_MEMORY_READ_WRITE ("Int", S32),
+  GUMJS_EXPORT_MEMORY_READ_WRITE ("UInt", U32),
+  GUMJS_EXPORT_MEMORY_READ_WRITE ("Long", LONG),
+  GUMJS_EXPORT_MEMORY_READ_WRITE ("ULong", ULONG),
   GUMJS_EXPORT_MEMORY_READ_WRITE ("Float", FLOAT),
   GUMJS_EXPORT_MEMORY_READ_WRITE ("Double", DOUBLE),
   GUMJS_EXPORT_MEMORY_READ_WRITE ("ByteArray", BYTE_ARRAY),
@@ -156,7 +179,6 @@ static const duk_function_list_entry gumjs_memory_functions[] =
   { NULL, NULL, 0 }
 };
 
-GUMJS_DECLARE_CONSTRUCTOR (gumjs_memory_access_monitor_construct)
 static const duk_function_list_entry gumjs_memory_access_monitor_functions[] =
 {
   { "enable", gumjs_memory_access_monitor_enable, 0 },
@@ -225,7 +247,7 @@ GUMJS_DEFINE_FUNCTION (gumjs_memory_alloc)
 
   if (size < page_size)
   {
-    _gum_duk_push_native_resource (ctx, g_malloc (size), g_free, core);
+    _gum_duk_push_native_resource (ctx, g_malloc0 (size), g_free, core);
   }
   else
   {
@@ -283,6 +305,38 @@ GUMJS_DEFINE_FUNCTION (gumjs_memory_protect)
 
   duk_push_boolean (ctx, success);
   return 1;
+}
+
+GUMJS_DEFINE_FUNCTION (gumjs_memory_patch_code)
+{
+  gpointer address;
+  gsize size;
+  GumMemoryPatchContext pc;
+  GumDukScope scope = GUM_DUK_SCOPE_INIT (args->core);
+  gboolean success;
+
+  _gum_duk_args_parse (args, "pZF", &address, &size, &pc.apply);
+  pc.scope = &scope;
+
+  success = gum_memory_patch_code (GUM_ADDRESS (address), size,
+      (GumMemoryPatchApplyFunc) gum_memory_patch_context_apply, &pc);
+  if (!success)
+    _gum_duk_throw (ctx, "invalid address");
+
+  return 0;
+}
+
+static void
+gum_memory_patch_context_apply (gpointer mem,
+                                GumMemoryPatchContext * self)
+{
+  GumDukScope * scope = self->scope;
+  duk_context * ctx = scope->ctx;
+
+  duk_push_heapptr (ctx, self->apply);
+  _gum_duk_push_native_pointer (ctx, mem, scope->core);
+  _gum_duk_scope_call (scope, 1);
+  duk_pop (ctx);
 }
 
 static int
@@ -343,6 +397,12 @@ gum_duk_memory_read (GumMemoryValueType type,
       case GUM_MEMORY_VALUE_U64:
         _gum_duk_push_uint64 (ctx, *((guint64 *) address), core);
         break;
+      case GUM_MEMORY_VALUE_LONG:
+        _gum_duk_push_int64 (ctx, *((glong *) address), core);
+        break;
+      case GUM_MEMORY_VALUE_ULONG:
+        _gum_duk_push_uint64 (ctx, *((gulong *) address), core);
+        break;
       case GUM_MEMORY_VALUE_FLOAT:
         duk_push_number (ctx, *((gfloat *) address));
         break;
@@ -393,7 +453,7 @@ gum_duk_memory_read (GumMemoryValueType type,
         }
 
         if (length != 0)
-          memcpy (&dummy_to_trap_bad_pointer_early, data, 1);
+          memcpy (&dummy_to_trap_bad_pointer_early, data, sizeof (guint8));
 
         if (length < 0)
         {
@@ -423,7 +483,7 @@ gum_duk_memory_read (GumMemoryValueType type,
         }
 
         if (length != 0)
-          memcpy (&dummy_to_trap_bad_pointer_early, data, 1);
+          memcpy (&dummy_to_trap_bad_pointer_early, data, sizeof (guint8));
 
         if (length < 0)
         {
@@ -455,9 +515,11 @@ gum_duk_memory_read (GumMemoryValueType type,
         }
 
         if (length != 0)
-          memcpy (&dummy_to_trap_bad_pointer_early, str_utf16, 1);
+          memcpy (&dummy_to_trap_bad_pointer_early, str_utf16, sizeof (guint8));
 
         str_utf8 = g_utf16_to_utf8 (str_utf16, length, NULL, &size, NULL);
+        if (str_utf8 == NULL)
+          _gum_duk_throw (ctx, "invalid string");
         duk_push_string (ctx, str_utf8);
         g_free (str_utf8);
 
@@ -548,9 +610,11 @@ gum_duk_memory_write (GumMemoryValueType type,
       _gum_duk_args_parse (args, "pZ", &address, &u);
       break;
     case GUM_MEMORY_VALUE_S64:
+    case GUM_MEMORY_VALUE_LONG:
       _gum_duk_args_parse (args, "pq", &address, &s64);
       break;
     case GUM_MEMORY_VALUE_U64:
+    case GUM_MEMORY_VALUE_ULONG:
       _gum_duk_args_parse (args, "pQ", &address, &u64);
       break;
     case GUM_MEMORY_VALUE_FLOAT:
@@ -607,6 +671,12 @@ gum_duk_memory_write (GumMemoryValueType type,
         break;
       case GUM_MEMORY_VALUE_U64:
         *((guint64 *) address) = u64;
+        break;
+      case GUM_MEMORY_VALUE_LONG:
+        *((glong *) address) = s64;
+        break;
+      case GUM_MEMORY_VALUE_ULONG:
+        *((gulong *) address) = u64;
         break;
       case GUM_MEMORY_VALUE_FLOAT:
         *((gfloat *) address) = number;
@@ -789,25 +859,25 @@ GUMJS_DEFINE_FUNCTION (gumjs_memory_scan)
 }
 
 static void
-gum_memory_scan_context_free (GumMemoryScanContext * ctx)
+gum_memory_scan_context_free (GumMemoryScanContext * self)
 {
-  GumDukCore * core = ctx->core;
+  GumDukCore * core = self->core;
   GumDukScope scope;
-  duk_context * js_ctx;
+  duk_context * ctx;
 
-  js_ctx = _gum_duk_scope_enter (&scope, core);
+  ctx = _gum_duk_scope_enter (&scope, core);
 
-  _gum_duk_unprotect (js_ctx, ctx->on_match);
-  if (ctx->on_error != NULL)
-    _gum_duk_unprotect (js_ctx, ctx->on_error);
-  _gum_duk_unprotect (js_ctx, ctx->on_complete);
+  _gum_duk_unprotect (ctx, self->on_match);
+  if (self->on_error != NULL)
+    _gum_duk_unprotect (ctx, self->on_error);
+  _gum_duk_unprotect (ctx, self->on_complete);
 
   _gum_duk_core_unpin (core);
   _gum_duk_scope_leave (&scope);
 
-  gum_match_pattern_free (ctx->pattern);
+  gum_match_pattern_free (self->pattern);
 
-  g_slice_free (GumMemoryScanContext, ctx);
+  g_slice_free (GumMemoryScanContext, self);
 }
 
 static void
@@ -822,7 +892,7 @@ gum_memory_scan_context_run (GumMemoryScanContext * self)
   if (gum_exceptor_try (exceptor, &exceptor_scope))
   {
     gum_memory_scan (&self->range, self->pattern,
-        gum_memory_scan_context_emit_match, self);
+        (GumMemoryScanMatchFunc) gum_memory_scan_context_emit_match, self);
   }
 
   ctx = _gum_duk_scope_enter (&script_scope, core);
@@ -854,9 +924,8 @@ gum_memory_scan_context_run (GumMemoryScanContext * self)
 static gboolean
 gum_memory_scan_context_emit_match (GumAddress address,
                                     gsize size,
-                                    gpointer user_data)
+                                    GumMemoryScanContext * self)
 {
-  GumMemoryScanContext * self = user_data;
   GumDukCore * core = self->core;
   GumDukScope scope;
   duk_context * ctx;
@@ -906,7 +975,8 @@ GUMJS_DEFINE_FUNCTION (gumjs_memory_scan_sync)
 
   if (gum_exceptor_try (core->exceptor, &scope))
   {
-    gum_memory_scan (&range, pattern, gum_append_match, core);
+    gum_memory_scan (&range, pattern, (GumMemoryScanMatchFunc) gum_append_match,
+        core);
   }
 
   gum_match_pattern_free (pattern);
@@ -922,9 +992,8 @@ GUMJS_DEFINE_FUNCTION (gumjs_memory_scan_sync)
 static gboolean
 gum_append_match (GumAddress address,
                   gsize size,
-                  gpointer user_data)
+                  GumDukCore * core)
 {
-  GumDukCore * core = user_data;
   GumDukScope scope = GUM_DUK_SCOPE_INIT (core);
   duk_context * ctx = scope.ctx;
 

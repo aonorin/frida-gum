@@ -21,6 +21,11 @@ v8_sources = \
 	gumv8bundle.cpp \
 	gumv8scope.h \
 	gumv8scope.cpp \
+	gumv8value.h \
+	gumv8value.cpp \
+	gumv8object.h \
+	gumv8object.cpp \
+	gumv8macros.h \
 	gumv8core.h \
 	gumv8core.cpp \
 	gumv8kernel.h \
@@ -35,10 +40,10 @@ v8_sources = \
 	gumv8module.cpp \
 	gumv8file.h \
 	gumv8file.cpp \
-	gumv8socket.h \
-	gumv8socket.cpp \
 	gumv8stream.h \
 	gumv8stream.cpp \
+	gumv8socket.h \
+	gumv8socket.cpp \
 	gumv8interceptor.h \
 	gumv8interceptor.cpp \
 	gumv8stalker.h \
@@ -63,6 +68,8 @@ duk_sources = \
 	gumdukbundle.c \
 	gumdukvalue.h \
 	gumdukvalue.c \
+	gumdukobject.h \
+	gumdukobject.c \
 	gumdukmacros.h \
 	gumdukcore.h \
 	gumdukcore.c \
@@ -78,10 +85,10 @@ duk_sources = \
 	gumdukmodule.c \
 	gumdukfile.h \
 	gumdukfile.c \
-	gumduksocket.h \
-	gumduksocket.c \
 	gumdukstream.h \
 	gumdukstream.c \
+	gumduksocket.h \
+	gumduksocket.c \
 	gumdukinterceptor.h \
 	gumdukinterceptor.c \
 	gumdukstalker.h \
@@ -92,6 +99,8 @@ duk_sources = \
 	gumduksymbol.c \
 	gumdukinstruction.h \
 	gumdukinstruction.c \
+	gumdukcompat.h \
+	gumdukcompat.c \
 	duk_config.h \
 	duktape.c \
 	duktape.h \
@@ -132,6 +141,8 @@ libfrida_gumjs_la_SOURCES = \
 	gumscriptscheduler.c \
 	gumscripttask.h \
 	gumscripttask.c \
+	gumsourcemap.h \
+	gumsourcemap.c \
 	$(backend_sources) \
 	$(NULL)
 libfrida_gumjs_la_CXXFLAGS = \
@@ -142,12 +153,18 @@ libfrida_gumjs_la_LIBTOOLFLAGS = \
 	$(NULL)
 
 script_runtime_sources = \
-	gumjs-core.js \
-	gumjs-source-map.js \
-	gumjs-java.js \
-	gumjs-objc.js \
-	gumjs-debug.js \
-	gumjs-babel-polyfill.js \
+	runtime/entrypoint-v8.js \
+	runtime/entrypoint-duktape.js \
+	runtime/core.js \
+	runtime/message-dispatcher.js \
+	runtime/error-handler-v8.js \
+	runtime/error-handler-duktape.js \
+	runtime/console.js \
+	runtime/hexdump.js \
+	runtime/promise.js \
+	runtime/objc.js \
+	runtime/java.js \
+	frida-debug.js \
 	$(NULL)
 
 script-runtime-stamp: generate-runtime.py $(script_runtime_sources)

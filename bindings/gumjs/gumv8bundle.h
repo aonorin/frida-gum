@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Ole André Vadla Ravnås <ole.andre.ravnas@tillitech.com>
+ * Copyright (C) 2015-2016 Ole André Vadla Ravnås <oleavr@nowsecure.com>
  *
  * Licence: wxWindows Library Licence, Version 3.1
  */
@@ -10,31 +10,23 @@
 #include <glib.h>
 #include <v8.h>
 
-#define GUM_MAX_SCRIPT_SOURCE_CHUNKS 6
-
-typedef struct _GumV8Bundle GumV8Bundle;
-typedef struct _GumV8Source GumV8Source;
-
-struct _GumV8Bundle
+struct GumV8Bundle
 {
   GPtrArray * scripts;
   v8::Isolate * isolate;
 };
 
-struct _GumV8Source
+struct GumV8RuntimeModule
 {
   const gchar * name;
-  const gchar * chunks[GUM_MAX_SCRIPT_SOURCE_CHUNKS];
+  const gchar * source_code;
+  const gchar * source_map;
 };
 
-G_BEGIN_DECLS
+G_GNUC_INTERNAL GumV8Bundle * gum_v8_bundle_new (v8::Isolate * isolate,
+    const GumV8RuntimeModule * modules);
+G_GNUC_INTERNAL void gum_v8_bundle_free (GumV8Bundle * bundle);
 
-GumV8Bundle * gum_v8_bundle_new (v8::Isolate * isolate,
-    const GumV8Source * sources);
-void gum_v8_bundle_free (GumV8Bundle * bundle);
-
-void gum_v8_bundle_run (GumV8Bundle * self);
-
-G_END_DECLS
+G_GNUC_INTERNAL void gum_v8_bundle_run (GumV8Bundle * self);
 
 #endif

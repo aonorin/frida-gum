@@ -19,13 +19,21 @@ struct _GumDukMatchContext
 };
 
 GUMJS_DECLARE_CONSTRUCTOR (gumjs_kernel_construct)
+GUMJS_DECLARE_GETTER (gumjs_kernel_get_available)
 GUMJS_DECLARE_FUNCTION (gumjs_kernel_enumerate_ranges)
 static gboolean gum_emit_range (const GumRangeDetails * details,
-    gpointer user_data);
+    GumDukMatchContext * mc);
 GUMJS_DECLARE_FUNCTION (gumjs_kernel_read_byte_array)
 GUMJS_DECLARE_FUNCTION (gumjs_kernel_write_byte_array)
 
-GUMJS_DECLARE_FUNCTION (gumjs_kernel_throw_not_available)
+static void gum_duk_kernel_check_api_available (duk_context * ctx);
+
+static const GumDukPropertyEntry gumjs_kernel_values[] =
+{
+  { "available", gumjs_kernel_get_available, NULL },
+
+  { NULL, NULL, NULL }
+};
 
 static const duk_function_list_entry gumjs_kernel_functions[] =
 {
@@ -47,31 +55,11 @@ _gum_duk_kernel_init (GumDukKernel * self,
 
   duk_push_c_function (ctx, gumjs_kernel_construct, 0);
   duk_push_object (ctx);
-  if (gum_kernel_api_is_available ())
-  {
-    duk_put_function_list (ctx, -1, gumjs_kernel_functions);
-
-    duk_push_boolean (ctx, TRUE);
-  }
-  else
-  {
-    duk_function_list_entry * unavailable_functions;
-    guint i;
-
-    unavailable_functions = g_alloca (sizeof (gumjs_kernel_functions));
-    memcpy (unavailable_functions, gumjs_kernel_functions,
-        sizeof (gumjs_kernel_functions));
-    for (i = 0; unavailable_functions[i].key != NULL; i++)
-    {
-      unavailable_functions[i].value = gumjs_kernel_throw_not_available;
-    }
-    duk_put_function_list (ctx, -1, unavailable_functions);
-
-    duk_push_boolean (ctx, FALSE);
-  }
-  duk_put_prop_string (ctx, -2, "available");
+  duk_put_function_list (ctx, -1, gumjs_kernel_functions);
   duk_put_prop_string (ctx, -2, "prototype");
   duk_new (ctx, 0);
+  _gum_duk_add_properties_to_class_by_heapptr (ctx,
+      duk_require_heapptr (ctx, -1), gumjs_kernel_values);
   _gum_duk_put_data (ctx, -1, self);
   duk_put_global_string (ctx, "Kernel");
 }
@@ -96,17 +84,27 @@ GUMJS_DEFINE_CONSTRUCTOR (gumjs_kernel_construct)
   return 0;
 }
 
+GUMJS_DEFINE_GETTER (gumjs_kernel_get_available)
+{
+  (void) args;
+
+  duk_push_boolean (ctx, gum_kernel_api_is_available ());
+  return 1;
+}
+
 GUMJS_DEFINE_FUNCTION (gumjs_kernel_enumerate_ranges)
 {
   GumDukMatchContext mc;
   GumPageProtection prot;
   GumDukScope scope = GUM_DUK_SCOPE_INIT (args->core);
 
+  gum_duk_kernel_check_api_available (ctx);
+
   _gum_duk_args_parse (args, "mF{onMatch,onComplete}", &prot, &mc.on_match,
       &mc.on_complete);
   mc.scope = &scope;
 
-  gum_kernel_enumerate_ranges (prot, gum_emit_range, &mc);
+  gum_kernel_enumerate_ranges (prot, (GumFoundRangeFunc) gum_emit_range, &mc);
   _gum_duk_scope_flush (&scope);
 
   duk_push_heapptr (ctx, mc.on_complete);
@@ -118,9 +116,8 @@ GUMJS_DEFINE_FUNCTION (gumjs_kernel_enumerate_ranges)
 
 static gboolean
 gum_emit_range (const GumRangeDetails * details,
-                gpointer user_data)
+                GumDukMatchContext * mc)
 {
-  GumDukMatchContext * mc = user_data;
   GumDukScope * scope = mc->scope;
   duk_context * ctx = scope->ctx;
   gboolean proceed = TRUE;
@@ -145,8 +142,10 @@ gum_emit_range (const GumRangeDetails * details,
 GUMJS_DEFINE_FUNCTION (gumjs_kernel_read_byte_array)
 {
   gpointer address;
-  gssize length = -1;
+  gssize length;
   gsize n_bytes_read;
+
+  gum_duk_kernel_check_api_available (ctx);
 
   _gum_duk_args_parse (args, "pZ", &address, &length);
 
@@ -196,6 +195,8 @@ GUMJS_DEFINE_FUNCTION (gumjs_kernel_write_byte_array)
   gsize length;
   gboolean success;
 
+  gum_duk_kernel_check_api_available (ctx);
+
   _gum_duk_args_parse (args, "pB", &address, &bytes);
 
   data = g_bytes_get_data (bytes, &length);
@@ -212,10 +213,9 @@ GUMJS_DEFINE_FUNCTION (gumjs_kernel_write_byte_array)
   return 0;
 }
 
-GUMJS_DEFINE_FUNCTION (gumjs_kernel_throw_not_available)
+static void
+gum_duk_kernel_check_api_available (duk_context * ctx)
 {
-  (void) args;
-
-  _gum_duk_throw (ctx, "Kernel API is not available on this system");
-  return 0;
+  if (!gum_kernel_api_is_available ())
+    _gum_duk_throw (ctx, "Kernel API is not available on this system");
 }

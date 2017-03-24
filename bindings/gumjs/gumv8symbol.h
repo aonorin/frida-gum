@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Ole André Vadla Ravnås <ole.andre.ravnas@tillitech.com>
+ * Copyright (C) 2015-2016 Ole André Vadla Ravnås <oleavr@nowsecure.com>
  *
  * Licence: wxWindows Library Licence, Version 3.1
  */
@@ -9,17 +9,14 @@
 
 #include "gumv8core.h"
 
-#include <v8.h>
-
-typedef struct _GumV8Symbol GumV8Symbol;
-
-struct _GumV8Symbol
+struct GumV8Symbol
 {
   GumV8Core * core;
 
   GHashTable * symbols;
 
-  GumPersistent<v8::Object>::type * value;
+  GumPersistent<v8::FunctionTemplate>::type * constructor;
+  GumPersistent<v8::Object>::type * template_object;
 };
 
 G_GNUC_INTERNAL void _gum_v8_symbol_init (GumV8Symbol * self,

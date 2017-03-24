@@ -103,7 +103,7 @@ SCRIPT_TESTCASE (object_enumeration_should_contain_parent_methods)
   {
     COMPILE_AND_LOAD_SCRIPT (
         "var keys = Object.keys(ObjC.classes.NSDate);"
-        "send(keys.includes(\"conformsToProtocol_\"));");
+        "send(keys.indexOf(\"conformsToProtocol_\") !== -1);");
     EXPECT_SEND_MESSAGE_WITH ("true");
   }
 }
@@ -159,8 +159,9 @@ SCRIPT_TESTCASE (class_enumeration_should_not_contain_instance_methods)
   {
     COMPILE_AND_LOAD_SCRIPT (
         "var keys = Object.keys(ObjC.classes.NSDate);"
-        "send(keys.includes(\"dateWithTimeIntervalSinceNow_\"));"
-        "send(keys.includes(\"initWithTimeIntervalSinceReferenceDate_\"));");
+        "send(keys.indexOf(\"dateWithTimeIntervalSinceNow_\") !== -1);"
+        "send(keys.indexOf(\"initWithTimeIntervalSinceReferenceDate_\")"
+            " !== -1);");
     EXPECT_SEND_MESSAGE_WITH ("true");
     EXPECT_SEND_MESSAGE_WITH ("false");
   }
@@ -172,8 +173,9 @@ SCRIPT_TESTCASE (instance_enumeration_should_not_contain_class_methods)
   {
     COMPILE_AND_LOAD_SCRIPT (
         "var keys = Object.keys(ObjC.classes.NSDate.date());"
-        "send(keys.includes(\"initWithTimeIntervalSinceReferenceDate_\"));"
-        "send(keys.includes(\"dateWithTimeIntervalSinceNow_\"));");
+        "send(keys.indexOf(\"initWithTimeIntervalSinceReferenceDate_\")"
+            " !== -1);"
+        "send(keys.indexOf(\"dateWithTimeIntervalSinceNow_\") !== -1);");
     EXPECT_SEND_MESSAGE_WITH ("true");
     EXPECT_SEND_MESSAGE_WITH ("false");
   }
@@ -934,7 +936,7 @@ SCRIPT_TESTCASE (performance)
     COMPILE_AND_LOAD_SCRIPT (
         "ObjC.classes.NSObject;"
         "var start = Date.now();"
-        "Object.keys(ObjC.classes.NSWindow);"
+        "Object.keys(ObjC.classes.NSDictionary);"
         "var end = Date.now();"
         "send(end - start);");
     item = test_script_fixture_pop_message (fixture);

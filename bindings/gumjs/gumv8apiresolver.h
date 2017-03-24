@@ -7,18 +7,18 @@
 #ifndef __GUM_V8_API_RESOLVER_H__
 #define __GUM_V8_API_RESOLVER_H__
 
-#include "gumv8core.h"
+#include "gumv8object.h"
 
-#include <v8.h>
+#include <gum/gumapiresolver.h>
 
-typedef struct _GumV8ApiResolver GumV8ApiResolver;
-
-struct _GumV8ApiResolver
+struct GumV8ApiResolver
 {
   GumV8Core * core;
 
-  GHashTable * resolvers;
+  GumV8ObjectManager objects;
 };
+
+typedef GumV8Object<GumApiResolver, GumV8ApiResolver> GumV8ApiResolverObject;
 
 G_GNUC_INTERNAL void _gum_v8_api_resolver_init (GumV8ApiResolver * self,
     GumV8Core * core, v8::Handle<v8::ObjectTemplate> scope);
